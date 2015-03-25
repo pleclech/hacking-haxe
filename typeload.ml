@@ -27,6 +27,14 @@ open Typecore
 
 let locate_macro_error = ref true
 
+(* the parser can accept file *.hx and *.ehx *)
+let file_ext_allowed = ref [".hx"; ".ehx"]
+
+(* extended syntax will be available in the parser if true *)
+let use_extended_syntax ext = match ext with
+	| ".ehx" -> true
+	| _ ->  false
+
 (*
 	Build module structure : should be atomic - no type loading is possible
 *)
@@ -3170,8 +3178,19 @@ let resolve_module_file com m remap p =
 				with Not_found -> x
 			) in
 			String.concat "/" (x :: l) ^ "/" ^ name
-	) ^ ".hx" in
-	let file = Common.find_file com file in
+	) in
+	let file =
+		let rec loop = function
+			| [] -> raise (Error (Module_not_found m,p))
+			| h :: t ->
+				try
+					let file = Common.find_file com (file ^ h) in
+						com.use_extended_syntax <- use_extended_syntax h;
+						file
+				with
+					Not_found -> loop t
+		in loop !file_ext_allowed
+	in
 	let file = (match String.lowercase (snd m) with
 	| "con" | "aux" | "prn" | "nul" | "com1" | "com2" | "com3" | "lpt1" | "lpt2" | "lpt3" when Sys.os_type = "Win32" ->
 		(* these names are reserved by the OS - old DOS legacy, such files cannot be easily created but are reported as visible *)

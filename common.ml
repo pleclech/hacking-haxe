@@ -157,6 +157,8 @@ type context = {
 	(* typing *)
 	mutable basic : basic_types;
 	memory_marker : float array;
+	(* extended syntax *)
+	mutable use_extended_syntax : bool;
 }
 
 exception Abort of string * Ast.pos
@@ -357,6 +359,7 @@ module MetaInfo = struct
 		| Access -> ":access",("Forces private access to package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
 		| Accessor -> ":accessor",("Used internally by DCE to mark property accessors",[UsedOn TClassField;Internal])
 		| Allow -> ":allow",("Allows private access from package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
+		| AllowWrite -> ":allowWrite",("Allows private writing from package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
 		| Analyzer -> ":analyzer",("Used to configure the static analyzer",[])
 		| Annotation -> ":annotation",("Annotation (@interface) definitions on -java-lib imports will be annotated with this metadata. Has no effect on types compiled by Haxe",[Platform Java; UsedOn TClass])
 		| ArrayAccess -> ":arrayAccess",("Allows [] access on an abstract",[UsedOnEither [TAbstract;TAbstractField]])
@@ -743,6 +746,7 @@ let create v args =
 		file_lookup_cache = Hashtbl.create 0;
 		stored_typed_exprs = PMap.empty;
 		memory_marker = memory_marker;
+		use_extended_syntax = false;
 	}
 
 let log com str =

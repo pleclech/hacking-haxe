@@ -244,6 +244,56 @@ let field_type ctx c pl f p =
 let class_field ctx c tl name p =
 	raw_class_field (fun f -> field_type ctx c tl f p) c tl name
 
+let rec make_path c f = match c.cl_kind with
+		| KAbstractImpl a -> fst a.a_path @ [snd a.a_path; f.cf_name]
+		| KGenericInstance(c,_) -> make_path c f
+		| _ when c.cl_private -> List.rev (f.cf_name :: snd c.cl_path :: (List.tl (List.rev (fst c.cl_path))))
+		| _ -> fst c.cl_path @ [snd c.cl_path; f.cf_name]
+
+let make_paths c cf =
+	let cur_paths = ref [] in
+	let rec loop c =
+		cur_paths :=  make_path c cf :: !cur_paths;
+		begin match c.cl_super with
+			| Some (csup,_) -> loop csup
+			| None -> ()
+		end;
+		List.iter (fun (c,_) -> loop c) c.cl_implements;
+	in
+		loop c;
+		!cur_paths
+
+let has_meta_access ?(partial=false) m c f path =
+	let path = List.rev path in
+	let b = EBreak in
+	let s_path e = match e with
+		| EField (e,f) -> f, fst e
+		| EConst (Ident n) -> n, b
+		| _ -> "", b
+	in
+	let chk_path_m e path =
+		match s_path(fst e) with
+		| "", _ -> false
+		| _,_ as se ->
+			let rec loop e p =
+				match e, p with
+				| ("",_), _ -> partial
+				| (s, e), x::xs -> 
+					let r = x=s in
+						if (e=b) then r
+						else (loop (s_path e) xs)
+				| (_,_), [] -> false
+			in loop se path
+	in
+	let rec loop = function
+			| (m2,el,_) :: l when m = m2 ->
+				List.exists(fun e -> chk_path_m e path) el
+				|| loop l
+			| _ :: l -> loop l
+			| [] -> false
+	in
+	loop c.cl_meta || loop f.cf_meta
+
 (* checks if we can access to a given class field using current context *)
 let rec can_access ctx ?(in_overload=false) c cf stat =
 	if cf.cf_public then
@@ -253,37 +303,6 @@ let rec can_access ctx ?(in_overload=false) c cf stat =
 	else
 	(* TODO: should we add a c == ctx.curclass short check here? *)
 	(* has metadata path *)
-	let rec make_path c f = match c.cl_kind with
-		| KAbstractImpl a -> fst a.a_path @ [snd a.a_path; f.cf_name]
-		| KGenericInstance(c,_) -> make_path c f
-		| _ when c.cl_private -> List.rev (f.cf_name :: snd c.cl_path :: (List.tl (List.rev (fst c.cl_path))))
-		| _ -> fst c.cl_path @ [snd c.cl_path; f.cf_name]
-	in
-	let rec expr_path acc e =
-		match fst e with
-		| EField (e,f) -> expr_path (f :: acc) e
-		| EConst (Ident n) -> n :: acc
-		| _ -> []
-	in
-	let rec chk_path psub pfull =
-		match psub, pfull with
-		| [], _ -> true
-		| a :: l1, b :: l2 when a = b -> chk_path l1 l2
-		| _ -> false
-	in
-	let has m c f path =
-		let rec loop = function
-			| (m2,el,_) :: l when m = m2 ->
-				List.exists (fun e ->
-					let p = expr_path [] e in
-					(p <> [] && chk_path p path)
-				) el
-				|| loop l
-			| _ :: l -> loop l
-			| [] -> false
-		in
-		loop c.cl_meta || loop f.cf_meta
-	in
 	let cur_paths = ref [] in
 	let rec loop c =
 		cur_paths := make_path c ctx.curfield :: !cur_paths;
@@ -299,14 +318,14 @@ let rec can_access ctx ?(in_overload=false) c cf stat =
 		(try
 			(* if our common ancestor declare/override the field, then we can access it *)
 			let f = if is_constr then (match c.cl_constructor with None -> raise Not_found | Some c -> c) else PMap.find cf.cf_name (if stat then c.cl_statics else c.cl_fields) in
-			is_parent c ctx.curclass || (List.exists (has Meta.Allow c f) !cur_paths)
+			is_parent c ctx.curclass || (List.exists (has_meta_access Meta.Allow c f) !cur_paths)
 		with Not_found ->
 			false
 		)
 		|| (match c.cl_super with
 		| Some (csup,_) -> loop csup
 		| None -> false)
-		|| has Meta.Access ctx.curclass ctx.curfield (make_path c cf)
+		|| has_meta_access Meta.Access ctx.curclass ctx.curfield (make_path c cf)
 	in
 	let b = loop c
 	(* access is also allowed of we access a type parameter which is constrained to our (base) class *)
@@ -1215,7 +1234,11 @@ let field_access ctx mode f fmode t e p =
 			let tresolve = tfun [ctx.t.tstring] t in
 			AKExpr (make_call ctx (mk (TField (e,FDynamic "resolve")) tresolve p) [fstring] t p)
 		| AccNever ->
-			if ctx.untyped then normal() else AKNo f.cf_name
+			if ctx.untyped then normal() 
+			else
+				let wa = List.exists (has_meta_access ~partial:true Meta.AllowWrite ctx.curclass f) (make_paths ctx.curclass ctx.curfield) in
+				if wa then normal()
+				else AKNo f.cf_name
 		| AccInline ->
 			AKInline (e,f,fmode,t)
 		| AccRequire (r,msg) ->
