@@ -35,6 +35,7 @@ module Meta = struct
 		| Access
 		| Accessor
 		| Allow
+		| AllowWrite
 		| Analyzer
 		| Annotation
 		| ArrayAccess
