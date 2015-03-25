@@ -854,7 +854,7 @@ and parse_type_path s = parse_type_path1 [] s
 
 and parse_type_path1 pack = parser
 	| [< name, p = dollar_ident_macro pack; s >] ->
-		if is_lower_ident name then
+		if (is_lower_ident name) && (name <> "_") then
 			(match s with parser
 			| [< '(Dot,p) >] ->
 				if is_resuming p then
@@ -865,22 +865,28 @@ and parse_type_path1 pack = parser
 				error (Custom "Type name should start with an uppercase letter") p
 			| [< >] -> serror())
 		else
-			let sub = (match s with parser
-				| [< '(Dot,p); s >] ->
-					(if is_resuming p then
-						raise (TypePath (List.rev pack,Some (name,false),false))
-					else match s with parser
-						| [< '(Const (Ident name),_) when not (is_lower_ident name) >] -> Some name
-						| [< '(Binop OpOr,_) when do_resume() >] ->
-							set_resume p;
-							raise (TypePath (List.rev pack,Some (name,false),false))
-						| [< >] -> serror())
-				| [< >] -> None
-			) in
-			let params = (match s with parser
-				| [< '(Binop OpLt,_); l = psep Comma parse_type_path_or_const; '(Binop OpGt,_) >] -> l
-				| [< >] -> []
-			) in
+			let name,params,sub =
+				if (name="_") then
+					"Dynamic", [TPType(CTPath {tpackage=[];tname="_";tparams=[];tsub=None;})], None
+				else
+					let sub = (match s with parser
+						| [< '(Dot,p); s >] ->
+							(if is_resuming p then
+								raise (TypePath (List.rev pack,Some (name,false),false))
+							else match s with parser
+								| [< '(Const (Ident name),_) when not (is_lower_ident name) >] -> Some name
+								| [< '(Binop OpOr,_) when do_resume() >] ->
+									set_resume p;
+									raise (TypePath (List.rev pack,Some (name,false),false))
+								| [< >] -> serror())
+						| [< >] -> None
+					) in
+					let params = (match s with parser
+						| [< '(Binop OpLt,_); l = psep Comma parse_type_path_or_const; '(Binop OpGt,_) >] -> l
+						| [< >] -> []
+					) in
+					name, params, sub
+			in
 			{
 				tpackage = List.rev pack;
 				tname = name;

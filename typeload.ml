@@ -263,9 +263,9 @@ let apply_macro ctx mode path el p =
 *)
 let rec load_type_def ctx p t =
 	let no_pack = t.tpackage = [] in
-	let tname = (match t.tsub with None -> t.tname | Some n -> n) in
+	let nf, tname = (match t.tsub with None -> false, t.tname | Some n -> if n="_" then false, t.tname else true, n) in
 	try
-		if t.tsub <> None then raise Not_found;
+		if nf then raise Not_found;
 		List.find (fun t2 ->
 			let tp = t_path t2 in
 			tp = (t.tpackage,tname) || (no_pack && snd tp = tname)
@@ -392,7 +392,12 @@ let rec load_instance ctx t p allow_no_params =
 		end else if path = ([],"Dynamic") then
 			match t.tparams with
 			| [] -> t_dynamic
-			| [TPType t] -> TDynamic (load_complex_type ctx p t)
+			| [TPType t] -> 
+				(match t with
+				| CTPath tp ->
+					if (tp.tname="_") then mk_mono()
+					else TDynamic (load_complex_type ctx p t)
+				| _ -> TDynamic (load_complex_type ctx p t))
 			| _ -> error "Too many parameters for Dynamic" p
 		else begin
 			if not is_rest && List.length types <> List.length t.tparams then error ("Invalid number of type parameters for " ^ s_type_path path) p;
