@@ -292,6 +292,7 @@ type token =
 	| Question
 	| At
 	| Dollar of string
+	| QIdent of string
 
 type unop_flag =
 	| Prefix
@@ -625,6 +626,7 @@ let s_token = function
 	| Question -> "?"
 	| At -> "@"
 	| Dollar v -> "$" ^ v
+	| QIdent v -> "`" ^ v
 
 let unescape s =
 	let b = Buffer.create 0 in
