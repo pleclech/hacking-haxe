@@ -156,6 +156,14 @@ let rec make_meta name params ((v,p2) as e) p1 =
 
 (* vv extended syntax vv *)
 let use_extended_syntax = ref false
+let for_ctx = ref []
+let push_for_ctx a = for_ctx := a :: !for_ctx
+let pop_for_ctx() = match !for_ctx with
+	| [] -> ()
+	| x::xs -> for_ctx := xs
+let peek_for_ctx() = match !for_ctx with
+	| [] -> None
+	| x::xs -> x
 (* ^^ extended syntax ^^ *)
 
 let reify in_macro =
@@ -1205,6 +1213,21 @@ and parse_function p1 inl = parser
 		with
 			Display e -> display (make e))
 
+and parse_for_init s =
+	if !use_extended_syntax then
+		match s with parser
+		| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] -> (EVars vl,punion p1 p2), false
+		| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e, false
+		| [< e = expr; s >] ->
+			let efor =
+				match Stream.peek s with
+				| Some((t,_)) when t=Semicolon ->
+					Stream.junk s;
+					false
+				| _ -> true
+			in e, efor
+	else (expr s), true
+
 and expr = parser
 	| [< (name,params,p) = parse_meta_entry; s >] ->
 		(try
@@ -1265,12 +1288,40 @@ and expr = parser
 		| [< '(Const (Int i),p); e = expr_next (EConst (Int i),p) >] -> e
 		| [< '(Const (Float f),p); e = expr_next (EConst (Float f),p) >] -> e
 		| [< >] -> serror()) */*)
-	| [< '(Kwd For,p); '(POpen,_); it = expr; '(PClose,_); s >] ->
-		(try
-			let e = secure_expr s in
-			(EFor (it,e),punion p (pos e))
-		with
-			Display e -> display (EFor (it,e),punion p (pos e)))
+	| [< '(Kwd For,p); '(POpen,po); it,hx=parse_for_init; s >] ->
+		let efor s =
+			push_for_ctx None;
+			try
+				let e = secure_expr s in
+				pop_for_ctx();
+				(EFor (it,e),punion p (pos e))
+			with 
+				Display e ->
+					pop_for_ctx();
+					display (EFor (it,e),punion p (pos e))
+		in
+		if hx then
+			match s with parser [< '(PClose,_); s >] -> efor s
+		else
+			(match s with parser 
+			| [< cond=expr; '(Semicolon,_); stop=expr; '(PClose,_); s >] ->
+				push_for_ctx (Some stop);
+				(try
+					let e = secure_expr s in
+					let pe = pos e in
+					let e = EBlock (e::stop::[]), punion (pos stop) pe in
+					let w = EWhile (cond,e,NormalWhile),punion p pe in
+					pop_for_ctx();
+					EBlock (it::w::[]), pos w
+				with
+					Display e ->
+						let w =
+							let pe = pos e in
+							let e = EBlock (e::stop::[]), punion (pos stop) pe in
+							EWhile (cond,e,NormalWhile),punion p pe
+						in
+							pop_for_ctx();
+							display (EBlock (it::w::[]), pos w)))
 	| [< '(Kwd If,p); '(POpen,_); cond = expr; '(PClose,_); e1 = expr; s >] ->
 		let e2 = (match s with parser
 			| [< '(Kwd Else,_); e2 = expr; s >] -> Some e2
@@ -1286,14 +1337,24 @@ and expr = parser
 		(EIf (cond,e1,e2), punion p (match e2 with None -> pos e1 | Some e -> pos e))
 	| [< '(Kwd Return,p); e = popt expr >] -> (EReturn e, match e with None -> p | Some e -> punion p (pos e))
 	| [< '(Kwd Break,p) >] -> (EBreak,p)
-	| [< '(Kwd Continue,p) >] -> (EContinue,p)
+	| [< '(Kwd Continue,p) >] ->
+		let c = EContinue, p in
+		(match peek_for_ctx() with
+		| None -> c
+		| Some(e) -> (EBlock (e::c::[])), p)
 	| [< '(Kwd While,p1); '(POpen,_); cond = expr; '(PClose,_); s >] ->
+		for_ctx := None :: !for_ctx;
 		(try
 			let e = secure_expr s in
+			pop_for_ctx();
 			(EWhile (cond,e,NormalWhile),punion p1 (pos e))
 		with
-			Display e -> display (EWhile (cond,e,NormalWhile),punion p1 (pos e)))
-	| [< '(Kwd Do,p1); e = expr; '(Kwd While,_); '(POpen,_); cond = expr; '(PClose,_); s >] -> (EWhile (cond,e,DoWhile),punion p1 (pos e))
+			Display e ->
+				pop_for_ctx();
+				display (EWhile (cond,e,NormalWhile),punion p1 (pos e)))
+	| [< '(Kwd Do,p1); e = expr; '(Kwd While,_); '(POpen,_); cond = expr; '(PClose,_); >] ->
+		pop_for_ctx();
+		(EWhile (cond,e,DoWhile),punion p1 (pos e))
 	| [< '(Kwd Switch,p1); e = expr; '(BrOpen,_); cases , def = parse_switch_cases e []; '(BrClose,p2); s >] -> (ESwitch (e,cases,def),punion p1 p2)
 	| [< '(Kwd Try,p1); e = expr; cl = plist (parse_catch e); >] -> (ETry (e,cl),p1)
 	| [< '(IntInterval i,p1); e2 = expr >] -> make_binop OpInterval (EConst (Int i),p1) e2
@@ -1523,10 +1584,12 @@ let parse ctx code =
 	let old_cache = !cache in
 	let mstack = ref [] in
 	let old_use_extended_syntax = !use_extended_syntax in
+	let old_for_ctx = !for_ctx in
 	cache := DynArray.create();
 	last_doc := None;
 	in_macro := Common.defined ctx Common.Define.Macro;
 	use_extended_syntax := ctx.Common.use_extended_syntax;
+	for_ctx := [];
 	Lexer.skip_header code;
 
 	let sraw = Stream.from (fun _ -> Some (Lexer.token code)) in
@@ -1611,6 +1674,7 @@ let parse ctx code =
 		(match !mstack with p :: _ when not (do_resume()) -> error Unclosed_macro p | _ -> ());
 		cache := old_cache;
 		use_extended_syntax := old_use_extended_syntax;
+		for_ctx := old_for_ctx;
 		Lexer.restore old;
 		l
 	with
@@ -1620,9 +1684,11 @@ let parse ctx code =
 			Lexer.restore old;
 			cache := old_cache;
 			use_extended_syntax := old_use_extended_syntax;
+			for_ctx := old_for_ctx;
 			error (Unexpected (fst last)) (pos last)
 		| e ->
 			Lexer.restore old;
 			cache := old_cache;
 			use_extended_syntax := old_use_extended_syntax;
+			for_ctx := old_for_ctx;
 			raise e
