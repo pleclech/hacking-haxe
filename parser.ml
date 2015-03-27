@@ -1272,10 +1272,24 @@ and expr = parser
 		(match s with parser
 		| [< al = psep Comma expr; '(PClose,p2); s >] -> expr_next (ENew (t,al),punion p1 p2) s
 		| [< >] -> serror())
-	| [< '(POpen,p1); e = expr; s >] -> (match s with parser
-		| [< '(PClose,p2); s >] -> expr_next (EParenthesis e, punion p1 p2) s
-		| [< t = parse_type_hint; '(PClose,p2); s >] -> expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
-		| [< >] -> serror())
+	| [< '(POpen,p1); s >] ->
+		let hx s = 
+			match s with parser
+			| [< e=expr; s >] ->
+			 (match s with parser
+				| [< '(PClose,p2); s >] -> expr_next (EParenthesis e, punion p1 p2) s
+				| [< t = parse_type_hint; '(PClose,p2); s >] -> expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
+				| [< >] -> serror())
+		in
+		if !use_extended_syntax then
+			match Stream.npeek 2 s with
+			| [(PClose, p2); (Binop OpArrow, _)] ->
+				Stream.junk s;
+				let p = punion p1 p2 in
+				expr_next (EConst (Ident ""), p) s
+			| _ -> hx s
+		else
+			hx s
 	| [< '(BkOpen,p1); l = parse_array_decl; '(BkClose,p2); s >] -> expr_next (EArrayDecl l, punion p1 p2) s
 	| [< '(Kwd Function,p1); e = parse_function p1 false; >] -> e
 	| [< '(Unop op,p1) when is_prefix op; e = expr >] -> make_unop op e p1
@@ -1436,13 +1450,17 @@ and expr_next e1 = parser
 					    in
 						(match e1 with
 						 | EConst(Ident s),p ->
-						 	let o,s = opt_ident s in
-						 	if is_lower_ident s then mk_fn [(s,o,None,None)] e2
-						 	else e
+						 	if s="" then mk_fn [] e2
+						 	else
+							 	let o,s = opt_ident s in
+							 	if is_lower_ident s then mk_fn [(s,o,None,None)] e2
+							 	else e
 						 | EParenthesis (EVars l, pv), p ->
+						 	let l = List.filter(fun (n,o, t) -> n<>"") l in
 						 	let l = List.map(fun (n,o,t) -> let b,n = opt_ident n in n,b,o,t) l in
 						 	mk_fn (List.rev l) e2
 						 | EVars l,pv ->
+						 	let l = List.filter(fun (n,o,t) -> n<>"") l in
 						 	let l = List.map(fun (n,o,t) -> let b,n = opt_ident n in n,b,o,t) l in
 						 	mk_fn (List.rev l) e2
 						 | _ -> e)
@@ -1495,26 +1513,33 @@ and expr_next e1 = parser
 				| EVars l, p -> Some(l, p)
 				| _ -> None
 			in
-			match s with parser
-			| [< '(Const (Ident n2),p2) ; s >] ->
-				let o,n = opt_ident n2 in
-				if is_lower_ident n then
-					let t2 = match Stream.peek s with
-					| Some((DblDot, _)) -> parse_type_opt s
-					| _ -> None
-					in
+			match Stream.peek s with
+			| Some((PClose, _)) ->
+				(match e1_args with
+				| Some((l, p)) -> EVars l, p
+				| _ -> e1)
+			| _ ->
+				(match s with parser
+				| [< '(Const (Ident n2),p2) ; s >] ->
+					let o,n = opt_ident n2 in
+					if is_lower_ident n then
+						let t2 = match Stream.peek s with
+						| Some((DblDot, _)) -> parse_type_opt s
+						| _ -> None
+						in
+						match e1_args with
+						| Some((l, p)) -> expr_next (EVars((n2,t2,None)::l), punion p p2) s
+						| _ -> serror()
+					else serror()
+				| [< s >]->
 					match e1_args with
-					| Some((l, p)) -> expr_next (EVars((n2,t2,None)::l), punion p p2) s
-					| _ -> serror()
-				else serror()
-			| [< s >]->
-				match e1_args with
-				| Some((l,p)) ->
-					(match Stream.peek s with
-						| Some((Binop OpArrow, _)) -> expr_next (EVars l, p) s
-						| _ -> e1
-					)
-				| _ -> e1
+					| Some((l,p)) ->
+						(match Stream.peek s with
+							| Some((Binop OpArrow, _)) -> expr_next (EVars l, p) s
+							| Some((PClose, _)) -> EVars l, p
+							| _ -> e1
+						)
+					| _ -> e1)
 		else e1
 
 and parse_guard = parser
