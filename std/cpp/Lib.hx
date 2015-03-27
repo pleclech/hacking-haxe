@@ -21,24 +21,9 @@
  */
 package cpp;
 
-#if macro
-import haxe.macro.Context;
-import haxe.macro.Type;
-import haxe.macro.Expr;
-#else
 
-using cpp.NativeString;
-using cpp.RawConstPointer;
-using cpp.Char;
-
-#end
-
-#if macro
-@:noPackageRestrict
-#end
 class Lib {
 
-   #if !macro
 	/**
 		Load and return a Cpp primitive from a DLL library.
 	**/
@@ -94,6 +79,15 @@ class Lib {
       return result;
    }
 
+	public static function pushDllSearchPath(inPath:String) : Void
+      untyped __global__.__hxcpp_push_dll_path(inPath);
+
+	public static function getDllExtension() : String
+      return untyped __global__.__hxcpp_get_dll_extension();
+
+	public static function getBinDirectory() : String
+      return untyped __global__.__hxcpp_get_bin_dir();
+
 	/**
 		Returns bytes referencing the content of a string.
       Use with extreme caution - changing constant strings will crash.
@@ -135,41 +129,9 @@ class Lib {
 		untyped __global__.__hxcpp_println(v);
 	}
 
-   #else
-   static function codeToType(code:String) : String
-   {
-      switch(code)
-      {
-         case "b" : return "Bool";
-         case "i" : return "Int";
-         case "d" : return "Float";
-         case "f" : return "cpp.Float32";
-         case "s" : return "String";
-         case "o" : return "cpp.Object";
-         case "v" : return "cpp.Void";
-         case "c" : return "cpp.ConstCharStar";
-         default:
-            throw "Unknown signature type :" + code;
-      }
-   }
-   #end
-
    public static function setFloatFormat(inFormat:String):Void
    {
       untyped __global__.__hxcpp_set_float_format(inFormat);
-   }
-
-   public static macro function loadPrime(inModule:String, inName:String, inSig:String,inAllowFail:Bool = false)
-   {
-      var parts = inSig.split("");
-      if (parts.length<1)
-         throw "Invalid function signature " + inSig;
-      var typeString = parts.length==1 ? "Void" : codeToType(parts.shift());
-      for(p in parts)
-         typeString += "->" + codeToType(p);
-      typeString = "cpp.Callable<" + typeString + ">";
-      var expr = 'new $typeString(cpp.Lib._loadPrime("$inModule","$inName","$inSig",$inAllowFail))';
-      return Context.parse( expr, Context.currentPos() );
    }
 
 }
