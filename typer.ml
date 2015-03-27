@@ -691,6 +691,7 @@ let is_forced_inline c cf =
 	| _ when Meta.has Meta.Extern cf.cf_meta -> true
 	| _ -> false
 
+(* args = list of expected args for fn ,el = actual list of args passed, r = return type *)
 let rec unify_call_args' ctx el args r callp inline force_inline =
 	let call_error err p =
 		raise (Error (Call_error err,p))
