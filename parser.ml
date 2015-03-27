@@ -1442,6 +1442,9 @@ and expr_next e1 = parser
 						 | EParenthesis (EVars l, pv), p ->
 						 	let l = List.map(fun (n,o,t) -> let b,n = opt_ident n in n,b,o,t) l in
 						 	mk_fn (List.rev l) e2
+						 | EVars l,pv ->
+						 	let l = List.map(fun (n,o,t) -> let b,n = opt_ident n in n,b,o,t) l in
+						 	mk_fn (List.rev l) e2
 						 | _ -> e)
 					| _ -> e) in
 					e
@@ -1478,19 +1481,40 @@ and expr_next e1 = parser
 		(EIn (e1,e2), punion (pos e1) (pos e2))
 	| [< s >] ->
 		if !use_extended_syntax then
-			match s with parser
-			| [< '(Const (Ident n2),p2) when is_lower_ident n2; s >] ->
-				(match e1 with
-				| EConst(Ident n1),p ->
+			let e1_args =
+				match e1 with
+				| EConst(Ident n1), p ->
 					let o,n = opt_ident n1 in
-					if is_lower_ident n then expr_next (EVars((n2,None,None)::(n1,None,None)::[]), punion p p2) s
-					else serror()
-				| EVars l,p ->
-					let o,n = opt_ident n2 in
-					if is_lower_ident n then expr_next (EVars((n2,None,None)::l), punion p p2) s
-					else serror()
-				| _ -> serror())
-			| [< >]-> e1
+					if is_lower_ident n then
+						let t1 = match Stream.peek s with
+							| Some((DblDot, _)) -> parse_type_opt s
+							| _ -> None
+						in
+						Some((n1,t1,None)::[], p)
+					else None
+				| EVars l, p -> Some(l, p)
+				| _ -> None
+			in
+			match s with parser
+			| [< '(Const (Ident n2),p2) ; s >] ->
+				let o,n = opt_ident n2 in
+				if is_lower_ident n then
+					let t2 = match Stream.peek s with
+					| Some((DblDot, _)) -> parse_type_opt s
+					| _ -> None
+					in
+					match e1_args with
+					| Some((l, p)) -> expr_next (EVars((n2,t2,None)::l), punion p p2) s
+					| _ -> serror()
+				else serror()
+			| [< s >]->
+				match e1_args with
+				| Some((l,p)) ->
+					(match Stream.peek s with
+						| Some((Binop OpArrow, _)) -> expr_next (EVars l, p) s
+						| _ -> e1
+					)
+				| _ -> e1
 		else e1
 
 and parse_guard = parser
