@@ -64,6 +64,12 @@ let make_file file =
 		lstrings = [];
 	}
 
+let prev_is_space = ref false
+let cur_is_space = ref false
+
+let set_space b =
+	prev_is_space := !cur_is_space;
+	cur_is_space := b
 
 let cur = ref (make_file "")
 
@@ -97,6 +103,7 @@ let restore c =
 	cur := c
 
 let newline lexbuf =
+	set_space true;
 	let cur = !cur in
 	cur.lline <- cur.lline + 1;
 	cur.llines <- (lexeme_end lexbuf,cur.lline) :: cur.llines
@@ -204,6 +211,7 @@ let store lexbuf = Buffer.add_string buf (lexeme lexbuf)
 let add c = Buffer.add_string buf c
 
 let mk_tok t pmin pmax =
+	set_space false;
 	t , { pfile = !cur.lfile; pmin = pmin; pmax = pmax }
 
 let mk lexbuf t =
@@ -229,7 +237,7 @@ rule skip_header = parse
 
 and token = parse
 	| eof { mk lexbuf Eof }
-	| [' ' '\t']+ { token lexbuf }
+	| [' ' '\t']+ { set_space true; token lexbuf }
 	| "\r\n" { newline lexbuf; token lexbuf }
 	| '\n' | '\r' { newline lexbuf; token lexbuf }
 	| "0x" ['0'-'9' 'a'-'f' 'A'-'F']+ { mk lexbuf (Const (Int (lexeme lexbuf))) }

@@ -1246,7 +1246,8 @@ and expr = parser
 		(match b with
 		| EObjectDecl _ -> expr_next e s
 		| _ -> e)
-	| [< '(Kwd Macro,p); s >] -> parse_macro_expr p s
+	| [< '(Kwd Macro,p); s >] ->
+		parse_macro_expr p s
 	| [< '(Kwd Var,p1); v = parse_var_decl >] -> (EVars [v],p1)
 	| [< '(Const c,p); s >] -> expr_next (EConst c,p) s
 	| [< '(Kwd This,p); s >] -> expr_next (EConst (Ident "this"),p) s
@@ -1380,7 +1381,8 @@ and expr = parser
 	| [< '(IntInterval i,p1); e2 = expr >] -> make_binop OpInterval (EConst (Int i),p1) e2
 	| [< '(Kwd Untyped,p1); e = expr >] -> (EUntyped e,punion p1 (pos e))
 	| [< '(Dollar v,p); s >] -> expr_next (EConst (Ident ("$"^v)),p) s
-	| [< '(Question, _); '(Const (Ident n1),p1); s >] -> expr_next (EConst(Ident ("?" ^ n1)), p1) s
+
+and sl_id = ("$@sl",None,None)
 
 and expr_next e1 = parser
 	| [< '(BrOpen,p1) when is_dollar_ident e1; eparam = expr; '(BrClose,p2); s >] ->
@@ -1427,119 +1429,100 @@ and expr_next e1 = parser
 		| [< e2 = secure_expr >] ->
 			make_binop OpGt e1 e2)
 	| [< '(Binop op,_); s >] ->
+		let mk_binop e2 =
+			let e = make_binop op e1 e2 in
+			if !use_extended_syntax then
+				match  op with
+				| OpArrow ->
+					let mk_fn args e = 
+						let e =
+							match e with
+							| EBlock _, _ -> e
+							| _ -> (EReturn (Some e)), pos e
+						in
+						let f = {
+							f_params = [];
+							f_type = None;
+							f_args = args;
+							f_expr = Some e;
+							} 
+						in
+						EFunction (None,f), pos e
+					in
+					let mk_fn_from_l l e =
+						let l = List.filter(fun (n,o,t) -> (n<>"") && (n<>"$@sl")) l in
+						let l = List.map(fun (n,o,t) -> let b,n = opt_ident n in n,b,o,t) l in
+						mk_fn (List.rev l) e2
+					in
+					(match e1 with
+					| EConst(Ident id),p ->
+						 	if id="" then mk_fn [] e2
+						 	else
+							 	let o, id = opt_ident id in
+							 	if is_lower_ident id then mk_fn [(id,o,None,None)] e2
+							 	else e
+					| EParenthesis (EVars l, _), _ | EVars l,_ -> mk_fn_from_l l e2
+					| _ -> mk_fn [] e2) 
+				| _ -> e
+			else e
+		in
 		(try
 			(match s with parser
-			| [< e2 = expr >] ->
-				let e = make_binop op e1 e2 in
-				if !use_extended_syntax then
-					let e = 
-					(match op with
-					| OpArrow ->
-						let mk_fn args e =
-							let e = match e with
-							 	| EBlock _, _ -> e
-							 	| _ -> (EReturn (Some e)), pos e
-							 	in
-							 	let f = {
-									f_params = [];
-									f_type = None;
-									f_args = args;
-									f_expr = Some e;
-								} in
-								EFunction (None,f), pos e
-					    in
-						(match e1 with
-						 | EConst(Ident s),p ->
-						 	if s="" then mk_fn [] e2
-						 	else
-							 	let o,s = opt_ident s in
-							 	if is_lower_ident s then mk_fn [(s,o,None,None)] e2
-							 	else e
-						 | EParenthesis (EVars l, pv), p ->
-						 	let l = List.filter(fun (n,o, t) -> n<>"") l in
-						 	let l = List.map(fun (n,o,t) -> let b,n = opt_ident n in n,b,o,t) l in
-						 	mk_fn (List.rev l) e2
-						 | EVars l,pv ->
-						 	let l = List.filter(fun (n,o,t) -> n<>"") l in
-						 	let l = List.map(fun (n,o,t) -> let b,n = opt_ident n in n,b,o,t) l in
-						 	mk_fn (List.rev l) e2
-						 | _ -> e)
-					| _ -> e) in
-					e
-				else e
+			| [< e2 = expr >] -> mk_binop e2
 			| [< >] -> serror())
 		with Display e2 ->
-			raise (Display (make_binop op e1 e2)))
+			raise (Display (mk_binop e2)))
 	| [< '(Unop op,p) when is_postfix e1 op; s >] ->
 		expr_next (EUnop (op,Postfix,e1), punion (pos e1) p) s
-	| [< '(Question,_); e2 = expr; s >] ->
-		let ternary s =  
-			(match s with parser
-			| [< '(DblDot,_); e3 = expr >] -> (ETernary (e1,e2,e3),punion (pos e1) (pos e3)))
-		in
-		if !use_extended_syntax then
-			match e2 with
-			| EConst(Ident n2), p2 when is_lower_ident n2 ->
-				(match Stream.peek s with
-				| Some((DblDot,_)) -> ternary s
-				| _ ->
-					(match e1 with
-					| EConst(Ident n1),p ->
-						let o,n = opt_ident n1 in
-						if is_lower_ident n then expr_next (EVars((n2,None,None)::(n1,None,None)::[]), punion p p2) s
-						else serror()
-					| EVars l,p ->
-						let o,n = opt_ident n2 in
-						if is_lower_ident n then expr_next (EVars((n2,None,None)::l), punion p p2) s
-						else serror()
-					| _ -> serror()))
-			| _ -> ternary s
-		else ternary s
+	| [< '(Question,_); e2 = expr; '(DblDot,_); e3 = expr >] ->
+		(ETernary (e1,e2,e3),punion (pos e1) (pos e3))
 	| [< '(Kwd In,_); e2 = expr >] ->
 		(EIn (e1,e2), punion (pos e1) (pos e2))
 	| [< s >] ->
 		if !use_extended_syntax then
-			let e1_args =
-				match e1 with
-				| EConst(Ident n1), p ->
-					let o,n = opt_ident n1 in
-					if is_lower_ident n then
-						let t1 = match Stream.peek s with
-							| Some((DblDot, _)) -> parse_type_opt s
-							| _ -> None
-						in
-						Some((n1,t1,None)::[], p)
-					else None
-				| EVars l, p -> Some(l, p)
-				| _ -> None
-			in
+			let pis = ref !Lexer.prev_is_space in
 			match Stream.peek s with
-			| Some((PClose, _)) ->
+			| Some((Semicolon ,_)) | Some((Comma, _))| Some((BkClose, _)) -> e1
+			| Some((tok, _)) -> 
+				let e1_args =
+					match e1 with
+					| EConst(Ident n1), p ->
+						let o,n = opt_ident n1 in
+						if is_lower_ident n then
+							let t1 = 
+								if tok=DblDot then
+									let t = parse_type_opt s in
+									pis := !Lexer.prev_is_space;
+									t
+								else None
+							in
+							Some(sl_id::(n1,t1,None)::[], p)
+						else None
+					| EVars (x::xs), p when x=sl_id -> Some(x::xs, p)
+					| _ -> None
+				in
 				(match e1_args with
-				| Some((l, p)) -> EVars l, p
+				| Some((x::l, p)) ->
+					(match Stream.npeek 2  s with
+						| [(PClose, _); (Binop OpArrow, _)] -> EVars(x::l), p
+						| [(Binop OpArrow, _); _] -> expr_next (EVars(x::l),p) s
+						| [(PClose, _); _] -> e1
+						| [(tok, _); _] when !pis ->
+							(match s with parser
+							| [< '(Const (Ident n2),p2) ; s >] ->
+								let o,n = opt_ident n2 in
+								if is_lower_ident n then
+									let t2 =
+										match Stream.peek s with
+										| Some((DblDot, _)) -> parse_type_opt s
+										| _ -> None
+									in expr_next (EVars(sl_id::(n2,t2,None)::l), punion p p2) s
+								else e1
+							| [< >] -> e1)
+						| _ -> e1
+					)
 				| _ -> e1)
-			| _ ->
-				(match s with parser
-				| [< '(Const (Ident n2),p2) ; s >] ->
-					let o,n = opt_ident n2 in
-					if is_lower_ident n then
-						let t2 = match Stream.peek s with
-						| Some((DblDot, _)) -> parse_type_opt s
-						| _ -> None
-						in
-						match e1_args with
-						| Some((l, p)) -> expr_next (EVars((n2,t2,None)::l), punion p p2) s
-						| _ -> serror()
-					else serror()
-				| [< s >]->
-					match e1_args with
-					| Some((l,p)) ->
-						(match Stream.peek s with
-							| Some((Binop OpArrow, _)) -> expr_next (EVars l, p) s
-							| Some((PClose, _)) -> EVars l, p
-							| _ -> e1
-						)
-					| _ -> e1)
+			| _ -> e1
 		else e1
 
 and parse_guard = parser
