@@ -756,7 +756,7 @@ let rec s_expr (e,_) =
 	| EBinop (op,e1,e2) -> s_expr e1 ^ s_binop op ^ s_expr e2
 	| ECall (e,el) -> s_expr e ^ "(" ^ (String.concat ", " (List.map s_expr el)) ^ ")"
 	| EField (e,f) -> s_expr e ^ "." ^ f
-	| EVars l -> "var "^(String.concat "," (List.map(fun (n,_,_) -> n) l))
+	| EVars l -> "var "^(String.concat "," (List.map(fun (n,_,a) -> n ^ (match a with None->""|Some(e) -> "="^(s_expr e)) ) l))
 	| _ -> "'???'"
 
 let get_value_meta meta =
