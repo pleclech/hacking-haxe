@@ -156,14 +156,46 @@ let rec make_meta name params ((v,p2) as e) p1 =
 
 (* vv extended syntax vv *)
 let use_extended_syntax = ref false
+
 let for_ctx = ref []
+
 let push_for_ctx a = for_ctx := a :: !for_ctx
+
 let pop_for_ctx() = match !for_ctx with
 	| [] -> ()
 	| x::xs -> for_ctx := xs
+
 let peek_for_ctx() = match !for_ctx with
 	| [] -> None
 	| x::xs -> x
+
+let warning : (string -> pos -> unit) ref = ref (fun _ _ -> assert false)
+
+let var_id = ref 0
+
+let mk_fresh_name ?(sfx="") pfx =
+		let i = !var_id in
+		var_id := i + 1;
+		pfx ^ (string_of_int i) ^ sfx
+
+let struct_var_name_prefix = "__st"
+
+let struct_global_var_marker = "$st$"
+
+type destructure_name = string * pos
+type destructure_elm = {
+	mutable name: string * string;
+	mutable globals_def: (destructure_name * destructure_name * expr) list;
+	mutable globals:  (destructure_name * destructure_name) list;
+	mutable locals: (destructure_name * destructure_name) list;
+	mutable protected: bool;
+	mutable structures: destructure_elm list;
+}
+
+let mk_structure_elm n = {name=n; globals_def=[]; globals=[]; locals=[]; structures=[]; protected=false;}
+
+let mk_ident n p = (EConst(Ident n), p)
+
 (* ^^ extended syntax ^^ *)
 
 let reify in_macro =
@@ -1114,8 +1146,18 @@ and block2 name ident p s =
 and block acc s =
 	try
 		(* because of inner recursion, we can't put Display handling in errors below *)
-		let e = try parse_block_elt s with Display e -> display (EBlock (List.rev (e :: acc)),snd e) in
-		block (e :: acc) s
+		let racc = ref acc in
+		(try 
+				let e = parse_block_elt s in
+				(match e with
+				| EBlock ((EConst(Ident struct_global_var_marker), p)::xs), _ when p=null_pos ->
+					racc := xs @ !racc
+				| _ ->
+					racc := e :: !racc;
+					());
+		with
+			| Display e -> display (EBlock (List.rev (e :: !racc)),snd e));
+		block !racc s
 	with
 		| Stream.Failure ->
 			List.rev acc
@@ -1128,8 +1170,17 @@ and block acc s =
 			block acc s
 
 and parse_block_elt = parser
-	| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] ->
-		(EVars vl,punion p1 p2)
+	| [< '(Kwd Var,p1); s >] ->
+		let hx s = 
+			match s with parser
+			| [< vl = parse_var_decls p1; p2 = semicolon >] -> (EVars vl,punion p1 p2)
+		in
+		if !use_extended_syntax then begin
+			match s with parser
+			| [< '(BrOpen, p1); ds=parse_top_destructure_obj; '(BrClose, p2); '(Binop OpAssign, _); rhs=expr; _ = semicolon >] ->
+				do_destructure_obj ds (punion p1 p2) rhs
+			| [< >] -> hx s
+		end else hx s
 	| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e
 	| [< e = expr; _ = semicolon >] -> e
 
@@ -1235,6 +1286,168 @@ and parse_for_init s =
 			in e, efor
 	else (expr s), true
 
+and parse_top_destructure_obj s =
+	parse_destructure_obj (mk_structure_elm ("","")) s
+
+and parse_destructure_obj ds s =
+	let pdds = parse_destructure_obj_decl ds in
+	let _ = psep Comma pdds s in
+	ds.globals <- List.rev ds.globals;
+	ds.globals_def <- List.rev ds.globals_def;
+	ds.structures <- List.rev ds.structures;
+	ds
+
+and parse_destructure_obj_def = parser
+	| [< '(Binop OpAssign, p); e2=expr >] -> Some e2
+	| [< >] -> None
+
+and parse_destructure_obj_decl ds s =
+	let is_root = ds.name=("","") in
+	match s with parser
+	| [< name,p = dollar_ident; s >] ->
+		let np = name,p in
+			(match s with parser
+			| [< '(DblDot, _); s >] ->
+				(match s with parser
+				| [< '(BrOpen,p3); s >] ->
+					let fn = mk_fresh_name struct_var_name_prefix ~sfx:("_"^name) in
+					let nds =
+						let tmp = mk_structure_elm (fn, name) in
+						ds.structures <- tmp::ds.structures;
+						tmp
+					in
+					(match s with parser
+					| [< _=parse_destructure_obj nds; '(BrClose, p) >] ->
+						ds.protected <- (*not is_root) &&*) (nds.protected || ds.protected)
+					| [< >] -> serror())
+				| [< name2,p2=dollar_ident; def=parse_destructure_obj_def >] ->
+					(match def with
+					| Some e ->
+						ds.protected <- true; (*not is_root;*)
+						ds.globals_def <- ((name2,p2), np, e)::ds.globals_def
+					| _ -> ds.globals <- ((name2,p2), np)::ds.globals))
+			| [< s >] ->
+				(match parse_destructure_obj_def s with
+				| Some e ->
+					ds.protected <- true; (*not is_root;*)
+					ds.globals_def <- (np, np, e)::ds.globals_def
+				| _ -> ds.globals <- (np, np)::ds.globals)
+			)
+
+and do_destructure_obj ds p1 e2 =
+	let p2 = pos e2 in
+	let rec for_all_ds ?(parent=None) fn acc wl =
+		match wl with
+		| [] -> acc
+		| ds::xs ->
+			let acc = fn acc parent ds in
+			for_all_ds ~parent:(Some ds) fn acc (ds.structures@xs)
+	in
+	let mk_assign var base field = make_binop OpAssign var (EField (base, field) , pos base) in
+	let mk_def_assign acc parent ds = 
+		let acc = List.fold_left (fun acc ((n,p),_,e) -> ((make_binop OpAssign (mk_ident n p) e))::acc) acc ds.globals_def in
+		(*let vn,on = ds.name in
+		let acc = if parent=None then acc else (make_binop OpAssign (mk_ident vn p2) (mk_ident "null" p2))::acc in*)
+		acc
+	in
+	let if_not_null o e1 e2 =
+		let p = pos o in
+		let test = (make_binop OpNotEq o (mk_ident "null" p)) in
+		EIf (test, e1, e2), p
+	in
+	let if_null_assign o e1 =
+		let p = pos o in
+		let test = (make_binop OpEq o (mk_ident "null" p)) in
+		let assign = make_binop OpAssign o e1 in
+		EIf (test, assign, None), p
+	in
+	let e_null = Some (mk_ident "null" p2) in
+	let mk_vars (gacc, sacc) parent ds =
+		let gacc = List.fold_left  (fun acc ((n,p),_) -> (n, None, e_null)::acc) gacc ds.globals in
+		let gacc = List.fold_left  (fun acc ((n,p),_,_) -> (n, None, e_null)::acc) gacc ds.globals_def in
+		let vn,fn = ds.name in
+		let sacc = if (fn="") then sacc else ((vn, None, e_null)::sacc) in
+		(gacc, sacc)
+	in
+	let gvars, svars = for_all_ds mk_vars ([], []) [ds] in
+	let b2 = [(EVars (List.rev svars), p1) ] in
+	let gvars = match e2 with
+		| EConst (Ident n), _ ->
+			ds.name <- (n, "");
+			gvars
+		| _ -> 
+			let n = mk_fresh_name struct_var_name_prefix in
+			ds.name <- (n, "");
+			(n, None, (Some e2))::gvars
+	in
+	let gvars = (EVars (List.rev gvars), p1) in
+	let rec loop pn acc wl =
+		match wl with
+		| [] -> acc
+		| ds::xs ->
+			let vn,on = ds.name in
+			let obj_name = EConst(Ident vn) in
+			let eobj_name = obj_name, p2 in
+			let init_global acc g =
+				match g with
+				| (vn, vp), (fn, fp) ->
+					let var = (mk_ident vn vp) in
+					let base = (obj_name, fp) in
+					let assign = mk_assign var base fn in
+					assign::acc
+			in
+			let init_global_def acc gd =
+				match gd with
+				| (vn, vp), (fn, fp), _ ->
+					let var = (mk_ident vn vp) in
+					let base = (obj_name, fp) in
+					let assign = mk_assign var base fn in
+					assign::acc
+			in
+			let init_struct_assign acc ds =
+				let vn,on = ds.name in
+				(mk_assign (mk_ident vn p2) eobj_name on)::acc
+			in
+			let assign_first acc =
+				match pn with
+				| None -> acc
+				| Some e ->
+					let assign = mk_assign eobj_name e on in
+					assign::acc
+			in
+			let acc = assign_first acc in
+			let acc, eobj_name =
+				if ds.protected then
+					(*let bt = for_all_ds mk_def_assign [] [ds] in*)
+					(*
+					let bt = mk_def_assign [] None ds in
+					let t = EBlock bt, p2 in
+					let ft = 
+						let acc=List.fold_left init_global_def [] ds.globals_def in
+						let acc=List.fold_left init_struct_assign acc ds.structures in
+						acc
+					in
+					let f = EBlock ft, p2 in
+					((if_null eobj_name t (Some f))::acc), None
+					*)
+					let bt = 
+						let acc=List.fold_left init_global_def [] ds.globals_def in
+						let acc=List.fold_left init_struct_assign acc ds.structures in
+						acc
+					in
+					let t = EBlock bt, p2 in
+					((if_not_null eobj_name t None)::acc), None
+				else
+					acc, Some eobj_name
+			in
+			let acc = List.fold_left init_global acc ds.globals in
+			loop eobj_name acc (ds.structures@xs)
+	in 
+	let b2 = loop None b2 [ds] in
+	let b2 = for_all_ds (fun acc p ds -> List.fold_left (fun acc ((n,p),_,e) -> (if_null_assign (mk_ident n p) e)::acc) acc ds.globals_def) b2 [ds] in
+	let b2 = (EBlock (List.rev b2)), p2 in
+	EBlock ([(mk_ident struct_global_var_marker null_pos);b2;gvars]), p2
+
 and expr = parser
 	| [< (name,params,p) = parse_meta_entry; s >] ->
 		(try
@@ -1246,9 +1459,8 @@ and expr = parser
 		(match b with
 		| EObjectDecl _ -> expr_next e s
 		| _ -> e)
-	| [< '(Kwd Macro,p); s >] ->
-		parse_macro_expr p s
-	| [< '(Kwd Var,p1); v = parse_var_decl >] -> (EVars [v],p1)
+	| [< '(Kwd Macro,p); s >] -> parse_macro_expr p s
+	| [< '(Kwd Var,p1); v = parse_var_decl >] -> EVars [v], p1
 	| [< '(Const c,p); s >] -> expr_next (EConst c,p) s
 	| [< '(Kwd This,p); s >] -> expr_next (EConst (Ident "this"),p) s
 	| [< '(Kwd True,p); s >] -> expr_next (EConst (Ident "true"),p) s
@@ -1694,6 +1906,7 @@ let parse ctx code =
 	last_doc := None;
 	in_macro := Common.defined ctx Common.Define.Macro;
 	use_extended_syntax := ctx.Common.use_extended_syntax;
+	warning := ctx.Common.warning;
 	for_ctx := [];
 	Lexer.skip_header code;
 
