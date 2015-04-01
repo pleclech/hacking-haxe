@@ -171,6 +171,16 @@ let peek_for_ctx() = match !for_ctx with
 
 let warning : (string -> pos -> unit) ref = ref (fun _ _ -> assert false)
 
+(* for debugging purpose *)
+let dump_n_token n s =
+		if !use_extended_syntax then
+		let p = ref null_pos in
+		match Stream.npeek n s with
+			| [] -> ()
+			| x::xs ->
+				let m=List.map(fun (t,p2) -> p:=punion !p p2; ("< " ^ (s_token t) ^ " >")) (x::xs) in
+				!warning (String.concat " " m) !p
+
 let var_id = ref 0
 
 let mk_fresh_name ?(sfx="") pfx =
@@ -181,6 +191,24 @@ let mk_fresh_name ?(sfx="") pfx =
 let struct_var_name_prefix = "__st"
 
 let struct_global_var_marker = "$st$"
+
+let flags_stack = ref []
+
+let noDbldotFlag = 1
+
+let get_flag() = match !flags_stack with
+	| [] -> 0
+	| x::xs -> x
+
+let is_flag_set f = match !flags_stack with
+	| [] -> false
+	| x::xs -> (x land f)=f
+
+let push_flag f = flags_stack := (get_flag() lor f)::!flags_stack
+
+let pop_flag() = match !flags_stack with
+	| [] -> 0
+	| x::xs -> flags_stack := xs; x
 
 type destructure_name = string * pos
 type destructure_elm = {
@@ -1022,6 +1050,9 @@ and parse_enum_param = parser
 	| [< '(Question,_); name, _ = ident; t = parse_type_hint >] -> (name,true,t)
 	| [< name, _ = ident; t = parse_type_hint >] -> (name,false,t)
 
+and push_flag_with_parser f = parser
+	| [< >] -> push_flag f
+
 and parse_class_field s =
 	let doc = get_doc s in
 	match s with parser
@@ -1460,10 +1491,7 @@ and do_destructure_obj ?(split_block=true) ds p1 e2 =
 and adapt_fn_with_structure fn_params fn_body =
 	if !use_extended_syntax then
 		let p = pos fn_body in
-		let b = ref (match fn_body with
-			| EBlock b, _ -> b
-			| _ -> [])
-		in
+		let b = ref [] in
 		let apply (n,t,o,v)  =
 			match v with
 			| None -> (n,t,o,v)
@@ -1473,8 +1501,17 @@ and adapt_fn_with_structure fn_params fn_body =
 			| _ -> (n,t,o,v)
 		in
 		let fn_params = List.map apply (fn_params) in
-		fn_params, (EBlock !b, p)
+		if (List.length !b)=0 then fn_params, fn_body
+		else
+			let b2 = match fn_body with
+				| EBlock b2, _ -> !b @ b2
+				| _ -> !b
+			in fn_params, (EBlock b2, p)
 	else fn_params, fn_body
+
+and expr_with_flag f s =
+ 	push_flag f;
+ 	expr s
 
 and expr = parser
 	| [< (name,params,p) = parse_meta_entry; s >] ->
@@ -1516,10 +1553,10 @@ and expr = parser
 	| [< '(POpen,p1); s >] ->
 		let hx s = 
 			match s with parser
-			| [< e=expr; s >] ->
+			| [< e=(expr_with_flag 0); s >] ->
 			 (match s with parser
-				| [< '(PClose,p2); s >] -> expr_next (EParenthesis e, punion p1 p2) s
-				| [< t = parse_type_hint; '(PClose,p2); s >] -> expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
+				| [< '(PClose,p2); s >] -> pop_flag(); expr_next (EParenthesis e, punion p1 p2) s
+				| [< t = parse_type_hint; '(PClose,p2); s >] -> pop_flag(); expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
 				| [< >] -> serror())
 		in
 		if !use_extended_syntax then
@@ -1619,7 +1656,6 @@ and expr = parser
 	| [< '(Kwd Switch,p1); e = expr; '(BrOpen,_); cases , def = parse_switch_cases e []; '(BrClose,p2); s >] -> (ESwitch (e,cases,def),punion p1 p2)
 	| [< '(Kwd Try,p1); e = expr; cl = plist (parse_catch e); >] -> (ETry (e,cl),p1)
 	| [< '(IntInterval i,p1); e2 = expr >] -> make_binop OpInterval (EConst (Int i),p1) e2
-	| [< '(Kwd Untyped,p1); e = expr >] -> (EUntyped e,punion p1 (pos e))
 	| [< '(Dollar v,p); s >] -> expr_next (EConst (Ident ("$"^v)),p) s
 
 and sl_id = ("$@sl",None,None)
@@ -1714,16 +1750,17 @@ and expr_next e1 = parser
 			raise (Display (mk_binop e2)))
 	| [< '(Unop op,p) when is_postfix e1 op; s >] ->
 		expr_next (EUnop (op,Postfix,e1), punion (pos e1) p) s
-	| [< '(Question,_); e2 = expr; '(DblDot,_); e3 = expr >] ->
+	| [< '(Question,_); e2 = (expr_with_flag noDbldotFlag); '(DblDot,_); e3 = expr >] ->
+		pop_flag();
 		(ETernary (e1,e2,e3),punion (pos e1) (pos e3))
 	| [< '(Kwd In,_); e2 = expr >] ->
 		(EIn (e1,e2), punion (pos e1) (pos e2))
 	| [< s >] ->
-		if !use_extended_syntax then
+		if !use_extended_syntax && (get_flag()=0) then
 			let pis = ref !Lexer.prev_is_space in
 			match Stream.peek s with
 			| Some((Semicolon ,_)) | Some((Comma, _))| Some((BkClose, _)) -> e1
-			| Some((tok, _)) -> 
+			| Some((tok, _)) ->
 				let e1_args =
 					match e1 with
 					| EConst(Ident n1), p ->
@@ -1743,7 +1780,7 @@ and expr_next e1 = parser
 				in
 				(match e1_args with
 				| Some((x::l, p)) ->
-					(match Stream.npeek 2  s with
+					(match Stream.npeek 2 s with
 						| [(PClose, _); (Binop OpArrow, _)] -> EVars(x::l), p
 						| [(Binop OpArrow, _); _] -> expr_next (EVars(x::l),p) s
 						| [(PClose, _); _] -> e1
@@ -1766,8 +1803,7 @@ and expr_next e1 = parser
 		else e1
 
 and parse_guard = parser
-	| [< '(Kwd If,p1); '(POpen,_); e = expr; '(PClose,_); >] ->
-		e
+	| [< '(Kwd If,p1); '(POpen,_); e = expr; '(PClose,_); >] -> e
 
 and parse_switch_cases eswitch cases = parser
 	| [< '(Kwd Default,p1); '(DblDot,_); s >] ->
@@ -1933,7 +1969,7 @@ let parse ctx code =
 	cache := DynArray.create();
 	last_doc := None;
 	in_macro := Common.defined ctx Common.Define.Macro;
-	use_extended_syntax := ctx.Common.use_extended_syntax;
+	use_extended_syntax := ctx.Common.use_extended_syntax || Common.defined ctx Common.Define.UseExtendedSyntax;
 	warning := ctx.Common.warning;
 	for_ctx := [];
 	Lexer.skip_header code;

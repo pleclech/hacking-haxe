@@ -243,6 +243,7 @@ module Define = struct
 		| SwfUseDoAbc
 		| Sys
 		| Unsafe
+		| UseExtendedSyntax
 		| UseNekoc
 		| UseRttiDoc
 		| Vcproj
@@ -327,6 +328,7 @@ module Define = struct
 		| SwfUseDoAbc -> ("swf_use_doabc", "Use DoAbc swf-tag instead of DoAbcDefine")
 		| Sys -> ("sys","Defined for all system platforms")
 		| Unsafe -> ("unsafe","Allow unsafe code when targeting C#")
+		| UseExtendedSyntax -> ("use_extended_syntax","Allow new syntax addition to be parsed in all file not only .ehx")
 		| UseNekoc -> ("use_nekoc","Use nekoc compiler instead of internal one")
 		| UseRttiDoc -> ("use_rtti_doc","Allows access to documentation during compilation")
 		| Vcproj -> ("vcproj","GenCPP internal")
