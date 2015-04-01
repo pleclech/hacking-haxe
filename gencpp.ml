@@ -321,7 +321,6 @@ let keyword_remap name =
    | "_Complex" | "INFINITY" | "NAN"
    | "INT_MIN" | "INT_MAX" | "INT8_MIN" | "INT8_MAX" | "UINT8_MAX" | "INT16_MIN"
    | "INT16_MAX" | "UINT16_MAX" | "INT32_MIN" | "INT32_MAX" | "UINT32_MAX"
-   | "DELETE"
    | "struct" -> "_" ^ name
    | "asm" -> "_asm_"
    | x -> x
@@ -397,6 +396,9 @@ match field_access with
    | _ -> ""
 ;;
 
+let format_code code =
+	String.concat "\n" (ExtString.String.nsplit code "\r\n")
+
 let get_code meta key =
    let code = get_meta_string meta key in
    let magic_var = "${GENCPP_SOURCE_DIRECTORY}"  in
@@ -407,7 +409,7 @@ let get_code meta key =
       end else
          code
       in
-   if (code<>"") then String.concat "\n" (ExtString.String.nsplit code "\r\n") ^ "\n" else code
+   if (code<>"") then format_code code ^ "\n" else code
 ;;
 
 let has_meta_key meta key =
@@ -1965,9 +1967,9 @@ and gen_expression ctx retval expression =
          | TLocal { v_name = "__cpp__" } -> true
          | _ -> false) ->
       ( match arg_list with
-      | [{ eexpr = TConst (TString code) }] -> output code;
+      | [{ eexpr = TConst (TString code) }] -> output (format_code code);
       | ({ eexpr = TConst (TString code) } as ecode) :: tl ->
-         Codegen.interpolate_code ctx.ctx_common code tl output (gen_expression ctx true) ecode.epos
+         Codegen.interpolate_code ctx.ctx_common (format_code code) tl output (gen_expression ctx true) ecode.epos
       | _ -> error "__cpp__'s first argument must be a string" func.epos;
       )
    | TCall (func, arg_list) when tcall_expand_args->
@@ -2001,7 +2003,7 @@ and gen_expression ctx retval expression =
             let signature = cpp_function_signature field.cf_type "" in
             let name = keyword_remap field.cf_name in
             let void_cast = has_meta_key field.cf_meta Meta.Void in
-            output ("::cpp::Function<" ^ signature ^">(");
+            output ("::cpp::Function< " ^ signature ^">(");
             if (void_cast) then output "hx::AnyCast(";
             output ("&::" ^(join_class_path klass.cl_path "::")^ "_obj::" ^ name );
             if (void_cast) then output ")";
