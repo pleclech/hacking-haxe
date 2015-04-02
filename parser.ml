@@ -1656,6 +1656,7 @@ and expr = parser
 	| [< '(Kwd Switch,p1); e = expr; '(BrOpen,_); cases , def = parse_switch_cases e []; '(BrClose,p2); s >] -> (ESwitch (e,cases,def),punion p1 p2)
 	| [< '(Kwd Try,p1); e = expr; cl = plist (parse_catch e); >] -> (ETry (e,cl),p1)
 	| [< '(IntInterval i,p1); e2 = expr >] -> make_binop OpInterval (EConst (Int i),p1) e2
+	| [< '(Kwd Untyped,p1); e = expr; s>] -> (EUntyped e,punion p1 (pos e))
 	| [< '(Dollar v,p); s >] -> expr_next (EConst (Ident ("$"^v)),p) s
 
 and sl_id = ("$@sl",None,None)
@@ -1905,8 +1906,7 @@ and toplevel_expr s =
 	with
 		Display e -> e
 
-and secure_expr s =
-	match s with parser
+and secure_expr = parser
 	| [< e = expr >] -> e
 	| [< >] -> serror()
 
