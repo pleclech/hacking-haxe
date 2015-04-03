@@ -190,6 +190,7 @@ type keyword =
 	| Function
 	| Class
 	| Var
+	| KConst
 	| If
 	| Else
 	| While
@@ -532,6 +533,7 @@ let s_keyword = function
 	| Class -> "class"
 	| Static -> "static"
 	| Var -> "var"
+	| KConst -> "const"
 	| If -> "if"
 	| Else -> "else"
 	| While -> "while"

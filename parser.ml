@@ -195,6 +195,7 @@ let struct_global_var_marker = "$st$"
 let flags_stack = ref []
 
 let noDbldotFlag = 1
+let parseOptTypeFlag = 2
 
 let get_flag() = match !flags_stack with
 	| [] -> 0
@@ -223,6 +224,383 @@ type destructure_elm = {
 let mk_structure_elm n = {name=n; globals_def=[]; globals=[]; locals=[]; structures=[]; protected=false;}
 
 let mk_ident n p = (EConst(Ident n), p)
+
+type cc_arg_mode =
+	| Read
+	| Write
+
+type scope_def_from =
+	| SDFClass of string
+	| SDFFunction of string
+	| SDFOther
+
+let s_from = function
+	| SDFClass s -> "class "^s
+	| SDFFunction s -> "function "^s
+	| SDFOther -> "other"
+
+type 'a def_value =  {ht:(string , 'a) Hashtbl.t; parent:'a def_node; from:scope_def_from;mutable exprs:expr list}
+and 'a def_node = Nil | DefValue of 'a def_value
+
+type cc_arg = {
+	arg: access list * pos * (string * bool * complex_type option * expr option);
+	is_mutable : bool;
+	mutable is_local : bool;
+	mutable use_cnt: int;
+}
+
+type cc_param = {
+	cc_open_par : pos;
+	cc_close_par : pos;
+	cc_params : type_param list;
+	cc_args : cc_arg list;
+	cc_access : access list;
+}
+
+type cc_info = {
+	mutable cc_param : cc_param option;
+	mutable cc_super_args : expr list;
+}
+let cc_arg_defs:'a def_value list ref = ref []
+let cl_sym_defs:'a def_value list ref  = ref []
+
+let mk_def_value p f = {ht=Hashtbl.create 0; parent=p; from=f; exprs=[];}
+
+let get_def_parent = function
+	| [] -> Nil
+	| x::xs -> DefValue x
+
+let leave_scope s = if (!use_extended_syntax) then
+	match !s with
+	| [] -> ()
+	| x::xs ->
+		(*dec_indent();*)
+		(*println("leaving scope:"^(s_from x.from));*)
+		s:=xs
+
+let push s e = s:=e::!s
+
+let enter_scope s f = if (!use_extended_syntax) then
+	(*println("entering scope:"^(s_from f));*)
+	(*inc_indent();*)
+	push s (mk_def_value (get_def_parent !s) f)
+
+let is_cc_scope = function
+	| {parent=Nil;from=_ as f; _} ->
+		(match f with 
+		| SDFClass _ -> true
+		| _ -> false)
+	| _ -> false
+
+let find_in_scope ?(deep=true) s n =
+	if (!use_extended_syntax) then
+		if (not deep) then 
+			match !s with
+			| [] -> None
+			| x::xs -> 
+				try Some(Hashtbl.find x.ht n)
+				with Not_found -> None
+		else
+			let rec loop = function
+				| [] -> None
+				| x::xs -> 
+					try Some(Hashtbl.find x.ht n) 
+					with Not_found -> loop xs
+			in loop !s
+	else None
+
+let get_scope_for ?(deep=true) s n =
+	if (!use_extended_syntax) then
+		if (not deep) then 
+			match !s with
+			| [] -> None
+			| x::xs -> 
+				try
+					Hashtbl.find x.ht n;
+					Some(x)
+				with Not_found -> None
+		else
+			let rec loop = function
+				| [] -> None
+				| x::xs -> 
+					try 
+						Hashtbl.find x.ht n;
+						Some(x)
+					with Not_found -> loop xs
+			in loop !s
+	else None
+
+let mk_this_assign fn pfn =
+	let e_this = mk_ident "this" pfn in
+	let e_this = (EField (e_this, fn) , pfn) in
+	make_binop OpAssign e_this (mk_ident fn pfn)
+
+let mk_call fn fa pfn =	ECall (mk_ident fn pfn, fa), pfn
+
+let parse_cc_opt_access = parser
+	| [< '(Kwd Private, _) >] -> [APrivate]
+	| [< '(Kwd Public, _) >] -> [APublic]
+	| [< >] -> [APublic]
+
+let parse_cc_param_opt_access = parser
+	| [< '(Kwd Private, _) >] -> [APrivate]
+	| [< '(Kwd Public, _) >] -> [APublic]
+	| [< >] -> [APublic]
+
+let parse_cc_param_opt_modifier = parser
+	| [< '(Kwd Var, _) >] -> false, true
+	| [< '(Kwd KConst, _) >] -> false, false
+	| [< >] -> true, false
+
+let get_opt_name = function
+	| None -> "", null_pos
+	| Some(n, p) -> n, p
+
+let add_cl_sym_def ?(new_scope=None) ?(class_field=false) s p = 
+	if (!use_extended_syntax && not !in_macro) then
+		let shadowing v pos opt_adder =
+			let tp = match v.arg with
+						| _,p,_ -> p
+			in
+			let printer file line = Printf.sprintf "%d:" line in
+			let tp = Lexer.get_error_pos printer tp in
+			if (v.use_cnt=0 && v.is_local) then begin
+				!warning (s ^ " is shadowing constructor parameter declared at " ^ tp)  pos;
+				match opt_adder with
+				| Some(adder) -> adder()
+				| _ -> ()
+			end else begin
+				v.is_local <- false;
+				error (Custom (s ^ " is overriding constructor parameter declared at " ^ tp)) pos
+			end
+		in 
+		if (class_field) then
+			let cf = find_in_scope cc_arg_defs s ~deep:false in
+			let add v = match !cc_arg_defs with x::xs -> (*println("adding in class field '"^s^" into "^(s_from x.from));*) Hashtbl.add x.ht s v | _ -> () in
+			match cf with
+			| Some(v) ->
+				v.is_local <- false;
+				shadowing v p None
+			| None -> add {arg=[], p ,(s, false, None, None);is_mutable=true;is_local=false;use_cnt=0;}
+		else
+			let scope = cl_sym_defs in
+			let _ = match !scope with 
+			| [] -> ()
+			| x::xs when s<>"" ->
+				(*println("try to add '"^s^" into "^(s_from x.from));*)
+				let add() = Hashtbl.add x.ht s p;
+				in
+				if (is_cc_scope x) then begin
+					(*println("add_cl_sym_def:"^s);*)
+					let cf = find_in_scope cc_arg_defs s ~deep:false in
+					match cf with
+					| Some(v) ->
+						if (not v.is_local) then
+							let tp = match v.arg with
+							| _,p,_ -> p
+							in
+							let printer file line = Printf.sprintf "%d:" line in
+							let tp = Lexer.get_error_pos printer tp in
+							error (Custom ("can't redeclared constructor parameter " ^ s ^ " declared at " ^ tp)) p
+						else
+							shadowing v p (Some add)
+					| None -> add()
+				end else
+					let cf = find_in_scope cc_arg_defs s ~deep:false in
+					(match cf with
+					| Some(v) ->
+							let tp = match v.arg with
+							| _,p,_ -> p
+							in
+							let printer file line = Printf.sprintf "%d:" line in
+							let tp = Lexer.get_error_pos printer tp in
+							!warning (s ^ " is shadowing constructor parameter declared at " ^ tp)  p;
+							add()
+					| None -> add())
+			| _ -> ()
+			in
+			match new_scope with
+			| Some(f) -> enter_scope scope f
+			| _ -> ()
+
+let exists_in_scope ?(deep=true) s n =
+	if (!use_extended_syntax) then
+		if not deep then 
+			match !s with
+			| [] -> false
+			| x::xs -> Hashtbl.mem x.ht n
+		else
+			let rec loop = function
+				| [] -> false
+				| x::xs -> 
+					if (Hashtbl.mem x.ht n) then true 
+					else loop xs
+			in loop !s
+	else false
+
+let use_def ?(check_scope=true) has_local_access s =
+	if (!use_extended_syntax && not !in_macro) then
+		let sv = if check_scope then find_in_scope cl_sym_defs s else None in
+		let cv = find_in_scope cc_arg_defs ~deep:false s in
+
+		let incr = match cv with
+			| Some(cf) when not has_local_access ->
+				(*println("incrementing usage of "^s);*)
+				cf.is_local <- false;
+				cf.use_cnt <- cf.use_cnt + 1
+			| _ -> ()
+		in
+		match sv with
+	    	| None -> incr
+	    	| Some(_) -> ()
+
+let use_cc_arg s m = 
+	if (!use_extended_syntax && not !in_macro) then
+		match !cc_arg_defs with
+			| [] -> ()
+			| x::xs ->
+				try
+					let cf = Hashtbl.find x.ht s in
+					let v = get_scope_for cl_sym_defs s
+					in match v with 
+					| None -> ()
+					| Some(v) when is_cc_scope v ->
+						(match m with
+						| Read -> cf.use_cnt <- cf.use_cnt + 1
+						| Write ->
+							if (cf.is_mutable) then 
+								cf.use_cnt <- cf.use_cnt + 1
+							else
+								match cf.arg with
+								| _, p , (n, _, _, _) -> error (Custom ("can't write into immutable argument " ^ n)) p)
+					| _ -> ()
+				with Not_found -> ()
+
+let mk_type pack name params sub =
+	{
+		tpackage = List.rev pack;
+		tname = name;
+		tparams = params;
+		tsub = sub;
+	}
+
+let mk_type_inf pack =
+	mk_type pack "Dynamic" ([TPType(CTPath {tpackage=[];tname="_";tparams=[];tsub=None;})]) None
+
+let mk_cc_fields fields =
+	let mk_field = function
+		| {arg=ac, p, (n, _, t, e); is_mutable=_ as im; _} ->
+			let t =
+				if t=None then Some(CTPath (mk_type_inf []))
+				else t
+			in
+			let k = 
+				if (im) then FVar(t, e)
+				else FProp("default", "never", t, e)
+			in
+			{
+				cff_name = n;
+				cff_doc = None;
+				cff_meta = [(Meta.AllowWrite , [mk_ident "new" p], p)];
+				cff_access = ac;
+				cff_pos = p;
+				cff_kind = k;
+			}
+	in
+	List.map mk_field fields
+
+
+let mk_cc_init cc p1 p2 =
+    let filter_field = function
+    	| {is_local=_ as il; _} -> not il
+    in
+	let fields =
+		match cc with
+      	| {cc_param=Some({cc_args=_ as ca; _}); _} -> ca
+      	| _ -> []
+    in
+    let fields = List.filter filter_field fields in
+		let super_idents = List.filter(function | EConst(Ident _), _ ->true | _ -> false) cc.cc_super_args in
+		(match cc.cc_param with
+		| None -> 
+			(match super_idents with
+			| [] -> ()
+			| (EConst(Ident n), p1)::xs -> error (Custom ("undefined parameter " ^ n) ) p1
+			| _ -> ())
+		| Some(cp) ->
+			let exists_ident n = function
+				| {arg=(_, _ , (n1, _, _, _)); _} when (n1=n) -> true
+				| _ -> false
+			in
+			let check_ident = function
+				| EConst(Ident n), p1 -> if (not (List.exists (exists_ident n) cp.cc_args)) then error (Custom ("undefined parameter " ^ n) ) p1
+				| _ -> ()
+			in
+			List.iter check_ident super_idents
+		);
+		let super =
+			if (cc.cc_super_args=[]) then []
+			else 
+				let p = snd (List.hd cc.cc_super_args) in
+				let super = mk_call "super" cc.cc_super_args p in [super]
+		in
+		let mk_assign = function
+		| {arg=(_, p, (n, _, _, _)); _} -> mk_this_assign n p
+		in
+		let assigns = match cc.cc_param with
+			| None -> []
+			| Some(cp) -> (List.map mk_assign fields)
+		in
+		let code = 
+			match !cc_arg_defs with
+			| x::_ -> 
+				(*println("fields.len:"^string_of_int(List.length x.exprs));*)
+				let rec loop acc fields = match fields with
+				| [] -> acc
+				| y::ys ->
+					let i = List.length ys in
+					let call = mk_call ("if" ^ (string_of_int i)) [] null_pos in
+					loop (y::call::acc) ys
+				in
+				let exprs = x.exprs in
+				x.exprs <- [];
+				loop [] exprs
+			| _ -> []
+		in
+		let init = super @ List.rev_append assigns code
+		in
+		let fields = mk_cc_fields fields in
+		let mk_new ac cp args p1 p2 = 
+			let f =  
+				{
+					f_params = cp;
+					f_args = args;
+					f_type = None;
+					f_expr = Some(EBlock init, p2);
+				} 
+			in
+				{
+					cff_name = "new";
+					cff_doc = None;
+					cff_meta = [];
+					cff_access = ac;
+					cff_pos = punion p1 p2;
+					cff_kind = FFun f;
+				}
+			in
+			match cc.cc_param with
+			| None -> if (init == []) then fields else fields @ [mk_new [APublic] [] [] p1 p2]
+			| Some(cp) ->
+				let mk_arg = function
+					| {arg=(_, _, a); _} -> a
+				in 
+				let args = List.map mk_arg cp.cc_args in
+				List.rev_append fields [mk_new cp.cc_access cp.cc_params args cp.cc_open_par cp.cc_close_par]
+	
+let add_cc_to_fields cc p1 p2 fl =
+	if (!use_extended_syntax) then
+		(mk_cc_init cc p1 p2) @ fl
+	else fl
 
 (* ^^ extended syntax ^^ *)
 
@@ -667,6 +1045,16 @@ and parse_type_decls pack acc s =
 		) acc;
 		raise (TypePath (pack,Some(name,true),b))
 
+and parse_opt_class_body p1 =
+	if (!use_extended_syntax) then parser
+		| [< '(Semicolon,p) >] -> [], p
+		| [< '(BrOpen,_); fl, p2 = parse_class_fields false p1 >] ->
+			let allow_init cf = cf.cff_meta <- ((Meta.Custom "allow_init"),[],null_pos) :: cf.cff_meta in
+			List.iter (fun c -> match c with | {cff_kind=FVar _; } as cf -> allow_init cf | {cff_kind=FProp _; } as cf -> allow_init cf | _ -> ()) fl;
+			fl, p2
+	else parser
+		| [< '(BrOpen,_); fl, p2 = parse_class_fields false p1 >] -> fl, p2
+
 and parse_type_decl s =
 	match s with parser
 	| [< '(Kwd Import,p1) >] -> parse_import s p1
@@ -682,7 +1070,10 @@ and parse_type_decl s =
 				d_flags = List.map snd c @ n;
 				d_data = l
 			}, punion p1 p2)
-		| [< n , p1 = parse_class_flags; name = type_name; tl = parse_constraint_params; hl = plist parse_class_herit; '(BrOpen,_); fl, p2 = parse_class_fields false p1 >] ->
+		| [< n , p1 = parse_class_flags; name = type_name; tl = parse_constraint_params; cc=parse_class_constructor name; hl = plist (parse_class_herit ~cc:cc); fl, p2 = parse_opt_class_body p1 >] ->
+			let fl = add_cc_to_fields cc p1 p2 fl in
+			leave_scope cl_sym_defs;
+			leave_scope cc_arg_defs;
 			(EClass {
 				d_name = name;
 				d_doc = doc;
@@ -965,13 +1356,7 @@ and parse_type_path1 pack = parser
 						| [< >] -> []
 					) in
 					name, params, sub
-			in
-			{
-				tpackage = List.rev pack;
-				tname = name;
-				tparams = params;
-				tsub = sub;
-			}
+			in mk_type pack name params sub
 	| [< '(Binop OpOr,_) when do_resume() >] ->
 		raise (TypePath (List.rev pack,None,false))
 
@@ -1168,8 +1553,22 @@ and parse_constraint_param = parser
 			tp_constraints = ctl;
 		}
 
-and parse_class_herit = parser
-	| [< '(Kwd Extends,_); t = parse_type_path >] -> HExtends t
+and parse_class_herit ?(cc={cc_param=None;cc_super_args=[];}) = parser
+	| [< '(Kwd Extends,_); t = parse_type_path; s>] -> 
+		if (!use_extended_syntax) then
+			match s with parser
+			| [< '(POpen,p1); s >] ->
+				enter_scope cc_arg_defs (SDFFunction "extends");
+				let e = 
+					match s with parser
+					| [<params = parse_call_params (mk_ident "super" p1); '(PClose,p2) >] ->
+						cc.cc_super_args <- params;
+						HExtends t
+				in
+					leave_scope cc_arg_defs;
+					e
+			| [< >] -> HExtends t
+		else HExtends t
 	| [< '(Kwd Implements,_); t = parse_type_path >] -> HImplements t
 
 and block1 = parser
@@ -1513,6 +1912,52 @@ and expr_with_flag f s =
  	push_flag f;
  	expr s
 
+and last_parsed_token s = (match Stream.peek s with None -> last_token s | Some t -> t)
+
+and parse_cc_param_with_ac ac (il, im) s =
+	match s with parser
+	| [< '(Question,_); name, pn = dollar_ident; t = parse_type_opt; c = parse_fun_param_value; s>] ->
+			let tok,pos = last_parsed_token s in 
+			{arg=(ac, punion pn pos, (name, true, t, c));is_local=il;is_mutable=im;use_cnt=0;}
+	| [< name, pn = dollar_ident; t = parse_type_opt; c = parse_fun_param_value; s>] ->
+			let tok,pos = last_parsed_token s in
+			{arg=(ac, punion pn pos, (name, false, t , c));is_local=il;is_mutable=im;use_cnt=0;}
+
+and parse_mandatory_type n p = parser
+	| [< t = parse_type_hint >] -> Some t
+	| [< >] -> error (Custom ("Explicit type required for field " ^ n)) p (* until i know how to resolve delayed type *)
+
+and parse_cc_param = parser
+	| [< ac = parse_cc_param_opt_access; m = parse_cc_param_opt_modifier; s >] -> parse_cc_param_with_ac ac m s
+
+and parse_class_constructor n s =
+	enter_scope cl_sym_defs (SDFClass n);
+	if (!use_extended_syntax) then
+		match s with parser
+			| [< ac = parse_cc_opt_access; cp = parse_constraint_params; s >] ->
+				match s with parser
+				| [< '(POpen,o1); al = psep Comma parse_cc_param;'(PClose,o2) >] ->
+					enter_scope cc_arg_defs (SDFClass n);
+					let scope = List.hd !cc_arg_defs in 
+					List.iter(fun arg -> match arg with {arg=(_, _ , (n1, _, _, _)); _} -> Hashtbl.add scope.ht n1 arg) al;
+					{
+						cc_param = Some 
+						{
+							cc_access = ac;
+							cc_params = cp;
+							cc_args = al;
+							cc_open_par = o1;
+							cc_close_par = o2;
+						};
+						cc_super_args = [];
+					}
+				| [< >] -> 
+					{cc_param=None; cc_super_args=[];}
+			| [< >] ->
+				{cc_param=None; cc_super_args=[];}
+	else 
+		{cc_param=None; cc_super_args=[];}
+
 and expr = parser
 	| [< (name,params,p) = parse_meta_entry; s >] ->
 		(try
@@ -1555,8 +2000,21 @@ and expr = parser
 			match s with parser
 			| [< e=(expr_with_flag 0); s >] ->
 			 (match s with parser
-				| [< '(PClose,p2); s >] -> pop_flag(); expr_next (EParenthesis e, punion p1 p2) s
-				| [< t = parse_type_hint; '(PClose,p2); s >] -> pop_flag(); expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
+				| [< '(PClose,p2); s >] ->
+					let e = (EParenthesis e, punion p1 p2) in
+					let pot = is_flag_set parseOptTypeFlag in
+					let _ = pop_flag() in
+					let e = 
+						if pot then
+							let _=pop_flag() in
+							let t = parse_type_opt s in
+							ECast (e,t), p2
+						else e
+					in
+					expr_next e s
+				| [< t = parse_type_hint; '(PClose,p2); s >] -> 
+					let _=pop_flag() in
+					expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
 				| [< >] -> serror())
 		in
 		if !use_extended_syntax then
@@ -1711,6 +2169,10 @@ and expr_next e1 = parser
 			if !use_extended_syntax then
 				match  op with
 				| OpArrow ->
+					let e1, t = match e1 with
+						| ECast (e, t), _ -> e, t
+						| _ -> e1, None
+					in
 					let mk_fn args e = 
 						let e =
 							match e with
@@ -1719,7 +2181,7 @@ and expr_next e1 = parser
 						in
 						let f = {
 							f_params = [];
-							f_type = None;
+							f_type = t;
 							f_args = args;
 							f_expr = Some e;
 							} 
@@ -1752,7 +2214,7 @@ and expr_next e1 = parser
 	| [< '(Unop op,p) when is_postfix e1 op; s >] ->
 		expr_next (EUnop (op,Postfix,e1), punion (pos e1) p) s
 	| [< '(Question,_); e2 = (expr_with_flag noDbldotFlag); '(DblDot,_); e3 = expr >] ->
-		pop_flag();
+		let _ = pop_flag() in
 		(ETernary (e1,e2,e3),punion (pos e1) (pos e3))
 	| [< '(Kwd In,_); e2 = expr >] ->
 		(EIn (e1,e2), punion (pos e1) (pos e2))
@@ -1784,7 +2246,11 @@ and expr_next e1 = parser
 					(match Stream.npeek 2 s with
 						| [(PClose, _); (Binop OpArrow, _)] -> EVars(x::l), p
 						| [(Binop OpArrow, _); _] -> expr_next (EVars(x::l),p) s
-						| [(PClose, _); _] -> e1
+						| [(PClose, _); (tok, p)] ->
+							if tok=DblDot then begin
+								push_flag parseOptTypeFlag;
+								EVars(x::l), p
+							end else e1
 						| [(tok, _); _] when !pis ->
 							(match s with parser
 							| [< '(Const (Ident n2),p2) ; s >] ->
