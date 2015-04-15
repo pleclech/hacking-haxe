@@ -36,6 +36,7 @@ module Meta = struct
 		| Accessor
 		| Allow
 		| AllowWrite
+		| AllowInitInCC
 		| Analyzer
 		| Annotation
 		| ArrayAccess
@@ -132,6 +133,7 @@ module Meta = struct
 		| Op
 		| Optional
 		| Overload
+		| Private
 		| PrivateAccess
 		| Property
 		| Protected
@@ -759,7 +761,17 @@ let rec s_expr (e,_) =
 	| ECall (e,el) -> s_expr e ^ "(" ^ (String.concat ", " (List.map s_expr el)) ^ ")"
 	| EField (e,f) -> s_expr e ^ "." ^ f
 	| EVars l -> "var "^(String.concat "," (List.map(fun (n,_,a) -> n ^ (match a with None->""|Some(e) -> "="^(s_expr e)) ) l))
+	| EIf (e,e1,e2) -> "if (" ^ (s_expr e) ^ ") " ^ (s_expr e1) ^ (match e2 with Some(e) -> " else " ^ (s_expr e) | _ -> "")
+	| EBlock el -> "{\n" ^ (String.concat "\n" (List.map (fun (e) -> (s_expr e)) el)) ^ "\n}"
 	| _ -> "'???'"
+
+let s_opt_expr se = match se with None -> "" | Some e -> s_expr e
+
+let s_field f =
+	match f.cff_kind with
+	| FVar (t,e) -> (String.concat " " (List.map(fun e->s_access e) f.cff_access)) ^ " var " ^ f.cff_name ^ " = " ^ s_opt_expr e
+	| FProp (get,set,t,e) -> (String.concat " " (List.map(fun e->s_access e) f.cff_access)) ^ " var " ^ f.cff_name ^ "(" ^ get ^ ", " ^ set ^ ") = " ^ s_opt_expr e
+	| _ -> "??"
 
 let get_value_meta meta =
 	try

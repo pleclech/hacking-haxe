@@ -882,7 +882,7 @@ let check_overriding ctx c =
 				| _ -> ());
 				if ctx.com.config.pf_overload && (Meta.has Meta.Overload f2.cf_meta && not (Meta.has Meta.Overload f.cf_meta)) then
 					display_error ctx ("Field " ^ i ^ " should be declared with @:overload since it was already declared as @:overload in superclass") p
-				else if not (List.memq f c.cl_overrides) then
+				else if not (Meta.has Meta.Private f.cf_meta) && not (List.memq f c.cl_overrides) then
 					display_error ctx ("Field " ^ i ^ " should be declared with 'override' since it is inherited from superclass " ^ Ast.s_type_path csup.cl_path) p
 				else if not f.cf_public && f2.cf_public then
 					display_error ctx ("Field " ^ i ^ " has less visibility (public/private) than superclass one") p
@@ -2027,7 +2027,8 @@ let init_class ctx c p context_init herits fields =
 				| Some (csup,_) ->
 					(* this can happen on -net-lib generated classes if a combination of explicit interfaces and variables with the same name happens *)
 					if not (csup.cl_interface && Meta.has Meta.CsNative c.cl_meta) then
-						error ("Redefinition of variable " ^ cf.cf_name ^ " in subclass is not allowed. Previously declared at " ^ (Ast.s_type_path csup.cl_path) ) p
+						if not (has_meta Meta.Private cf.cf_meta) then
+							error ("Redefinition of variable " ^ cf.cf_name ^ " in subclass is not allowed. Previously declared at " ^ (Ast.s_type_path csup.cl_path) ) p
 		end;
 		let t = cf.cf_type in
 
@@ -2074,16 +2075,20 @@ let init_class ctx c p context_init herits fields =
 						let e = match Optimizer.make_constant_expression ctx e with
 							| Some e -> e
 							| None ->
-								let rec has_this e = match e.eexpr with
-									| TConst TThis ->
-										display_error ctx "Cannot access this or other member field in variable initialization" e.epos;
-									| TLocal v when (match ctx.vthis with Some v2 -> v == v2 | None -> false) ->
-										display_error ctx "Cannot access this or other member field in variable initialization" e.epos;
-									| _ ->
-									Type.iter has_this e
-								in
-								has_this e;
-								e
+								if has_meta Meta.AllowInitInCC cf.cf_meta then begin
+									(*cf.cf_meta <- ((Meta.Custom "non_const"),[],null_pos) :: cf.cf_meta;*)
+									e
+								end else
+									let rec has_this e = match e.eexpr with
+										| TConst TThis ->
+											display_error ctx "Cannot access this or other member field in variable initialization" e.epos;
+										| TLocal v when (match ctx.vthis with Some v2 -> v == v2 | None -> false) ->
+											display_error ctx "Cannot access this or other member field in variable initialization" e.epos;
+										| _ ->
+										Type.iter has_this e
+									in
+									has_this e;
+									e
 						in
 						e
 					| Var v when v.v_read = AccInline ->
