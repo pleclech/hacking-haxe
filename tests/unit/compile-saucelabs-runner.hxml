@@ -1,0 +1,5 @@
+-cp src
+-js bin/RunSauceLabs.js
+-main RunSauceLabs
+-lib nodejs
+-debug
