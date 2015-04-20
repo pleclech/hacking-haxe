@@ -168,7 +168,7 @@ let make_module ctx mpath file tdecls loadp =
 						display_error ctx "Member property accessors must be get/set or never" p;
 						f
 					| FFun fu when f.cff_name = "new" && not stat ->
-						let init p = (EVars ["this",Some this_t,None],p) in
+						let init p = (EVars ["this",Some this_t,None,[]],p) in
 						let cast e = (ECast(e,None)),pos e in
 						let check_type e ct = (ECheckType(e,ct)),pos e in
 						let ret p = (EReturn (Some (cast (EConst (Ident "this"),p))),p) in
@@ -1813,7 +1813,7 @@ let build_enum_abstract ctx c a fields p =
 		| _ ->
 			()
 	) fields;
-	EVars ["",Some (CTAnonymous fields),None],p
+	EVars ["",Some (CTAnonymous fields),None,[]],p
 
 let is_java_native_function meta = try
 	match Meta.get Meta.Native meta with
@@ -1885,7 +1885,7 @@ let init_class ctx c p context_init herits fields =
 	let get_fields() = !fields in
 	build_module_def ctx (TClassDecl c) c.cl_meta get_fields context_init (fun (e,p) ->
 		match e with
-		| EVars [_,Some (CTAnonymous f),None] ->
+		| EVars [_,Some (CTAnonymous f),None, _] ->
 			List.iter (fun f ->
 				if List.mem AMacro f.cff_access then
 					(match ctx.g.macros with
@@ -2929,7 +2929,7 @@ let rec init_module_type ctx context_init do_init (decl,p) =
 		let init () = List.iter (fun f -> f()) !context_init in
 		build_module_def ctx (TEnumDecl e) e.e_meta get_constructs init (fun (e,p) ->
 			match e with
-			| EVars [_,Some (CTAnonymous fields),None] ->
+			| EVars [_,Some (CTAnonymous fields),None,_] ->
 				constructs := List.map (fun f ->
 					let args, params, t = (match f.cff_kind with
 					| FVar (t,None) -> [], [], t

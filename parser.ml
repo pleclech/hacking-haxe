@@ -877,7 +877,7 @@ let reify in_macro =
 			) [] p in
 			expr "EUnop" [op;to_bool (flag = Postfix) p;loop e]
 		| EVars vl ->
-			expr "EVars" [to_array (fun (v,t,e) p ->
+			expr "EVars" [to_array (fun (v,t,e,m) p ->
 				let fields = [
 					"name", to_string v p;
 					"type", to_opt to_ctype t p;
@@ -1345,7 +1345,7 @@ and parse_class_field_resume tdecl s =
 			| Kwd New :: Kwd Function :: _ ->
 				junk_tokens (k - 2);
 				parse_class_field_resume tdecl s
-			| Kwd Macro :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd Override :: _ | Kwd Dynamic :: _ | Kwd Inline :: _ ->
+			| Kwd Macro :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd KConst :: _ | Kwd Override :: _ | Kwd Dynamic :: _ | Kwd Inline :: _ ->
 				junk_tokens (k - 1);
 				parse_class_field_resume tdecl s
 			| BrClose :: _ when tdecl ->
@@ -1810,9 +1810,7 @@ and block1 = parser
 	| [< b = block [] >] -> EBlock b
 
 and block2 name ident p s =
-	match s with parser
-	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e) :: l)
-	| [< >] ->
+	let default s =
 		let e = expr_next (EConst ident,p) s in
 		try
 			let _ = semicolon s in
@@ -1822,6 +1820,20 @@ and block2 name ident p s =
 			| Error (err,p) ->
 				(!display_error) err p;
 				EBlock (block [e] s)
+	in
+	match s with parser
+	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e) :: l)
+	| [< s >] ->
+		if !use_extended_syntax then
+			match ident with
+			| Ident _ ->
+				(match Stream.peek s with
+				| Some(Comma, _) ->
+					let e = EConst ident,p in
+					EObjectDecl ((name,e) :: (parse_obj_decl s))
+				| _ -> default s)
+			| _ -> default s
+		else default s
 
 and block acc s =
 	try
@@ -1849,27 +1861,44 @@ and block acc s =
 			(!display_error) e p;
 			block acc s
 
-and parse_block_elt = parser
-	| [< '(Kwd Var,p1); s >] ->
+and parse_block_elt =
+	let parse_var_or_const is_const p1 s =
 		let hx s = 
 			match s with parser
-			| [< vl = parse_var_decls p1; p2 = semicolon >] -> (EVars vl,punion p1 p2)
+			| [< vl = parse_var_decls ~const:is_const p1; p2 = semicolon >] -> (EVars vl,punion p1 p2)
 		in
 		if !use_extended_syntax then begin
 			match s with parser
-			| [< '(BrOpen, p1); ds=parse_top_destructure_obj; '(BrClose, p2); '(Binop OpAssign, _); rhs=expr; _ = semicolon >] ->
-				do_destructure_obj ds (punion p1 p2) rhs
+			| [< '(BrOpen, p1); ds=parse_top_destructure_obj ; '(BrClose, p2); '(Binop OpAssign, _); rhs=expr; _ = semicolon >] ->
+				do_destructure_obj ~const:is_const ds (punion p1 p2) rhs
 			| [< s >] -> hx s
 		end else hx s
+	in
+	parser
+	| [< '(Kwd KConst,p1); s >] -> parse_var_or_const true p1 s
+	| [< '(Kwd Var,p1); s >] -> parse_var_or_const false p1 s
 	| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e
 	| [< e = expr; _ = semicolon >] -> e
 
 and parse_obj_decl = parser
 	| [< '(Comma,_); s >] ->
-		(match s with parser
-		| [< name, _ = ident; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
-		| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
-		| [< >] -> [])
+		if !use_extended_syntax then
+			(match s with parser
+			| [< name, p = ident; s >] ->
+				(match Stream.peek s with
+				| Some (Comma, _) -> (name, mk_ident name p) :: (parse_obj_decl s)
+				| Some (BrClose, _) -> [name, mk_ident name p]
+				| _ ->
+					(match s with parser
+					| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
+					| [< >] -> []))
+			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
+			| [< >] -> [])
+		else
+			(match s with parser
+			| [< name, _ = ident; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
+			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
+			| [< >] -> [])
 	| [< >] -> []
 
 and parse_array_decl = parser
@@ -1880,8 +1909,17 @@ and parse_array_decl = parser
 	| [< >] ->
 		[]
 
-and parse_var_decl_head = parser
-	| [< name, _ = dollar_ident; t = parse_type_opt >] -> (name,t)
+and parse_tuple acc = parser
+	| [< e = expr; s >] ->
+		(match s with parser
+		| [< '(Comma,_); l = parse_tuple (e::acc) >] -> l
+		| [< >] -> e::acc)
+	| [< >] -> acc
+
+and parse_var_decl_head ?(const=false) = parser
+	| [< meta = parse_meta; name, p = dollar_ident; t = parse_type_opt >] ->
+		let meta = if const then (Meta.Const,[],p)::meta else meta in
+		(name,t,meta)
 
 and parse_var_assignment = parser
 	| [< '(Binop OpAssign,p1); s >] ->
@@ -1891,27 +1929,63 @@ and parse_var_assignment = parser
 		end
 	| [< >] -> None
 
-and parse_var_decls_next vl = parser
-	| [< '(Comma,p1); name,t = parse_var_decl_head; s >] ->
+and parse_var_decls_next ?(const=false) vl = parser
+	| [< '(Comma,p1); name,t,meta = parse_var_decl_head ~const:const; s >] ->
 		begin try
 			let eo = parse_var_assignment s in
-			parse_var_decls_next ((name,t,eo) :: vl) s
+			parse_var_decls_next ~const:const ((name,t,eo,meta) :: vl) s
 		with Display e ->
-			let v = (name,t,Some e) in
+			let v = (name,t,Some e, meta) in
 			let e = (EVars(List.rev (v :: vl)),punion p1 (pos e)) in
 			display e
 		end
-	| [< >] ->
-		vl
+	| [< >] -> vl
 
-and parse_var_decls p1 = parser
-	| [< name,t = parse_var_decl_head; s >] ->
+and parse_tuple_head index s =
+	let name, t, meta = parse_var_decl_head s in
+	name, t, index, meta
+
+and parse_tuple_assigment_next vl index = parser
+	| [< '(Comma,p1); s; >] ->
+		(match Stream.peek s with
+		| Some(t, _)  when t=PClose -> vl
+		| _ -> 
+			(match s with parser 
+			| [< name,t, i, meta = parse_tuple_head index; s >] ->
+				begin try
+					let vl = if name="_" then vl else (name, t, i, meta)::vl in
+					parse_tuple_assigment_next vl (i+1) s
+				with Display e ->
+					let v = name,t,None, meta in
+					let vl = List.map (fun (n,t,i,m) -> n,t,None,m) vl in
+					let e = (EVars(List.rev (v :: vl)),punion p1 (pos e)) in
+					display e
+				end
+			| [< >] -> vl))
+	| [< >] -> vl
+
+and parse_tuple_assignment index = parser
+	[< name, t, i, meta = parse_tuple_head index; s >] ->
+		let acc = if name="_" then [] else [name, t, i, meta] in
+		parse_tuple_assigment_next acc (i+1) s
+
+and parse_var_decls ?(const=false) p1 = parser
+	| [< name,t, meta = parse_var_decl_head ~const:const; s >] ->
 		let eo = parse_var_assignment s in
-		List.rev (parse_var_decls_next [name,t,eo] s)
+		List.rev (parse_var_decls_next ~const:const [name,t,eo,meta] s)
+	| [< '(POpen, p1); l=parse_tuple_assignment 1; '(PClose, p2); s >] ->
+		(match parse_var_assignment s with
+		| Some(e) ->
+			List.map (fun (n,t,i,m) ->
+				let ef = EField (e, ("_" ^ (string_of_int i))) in
+				let e = Some (ef, pos e) in
+				n,t,e,m
+			) l
+		| _ -> error (Custom "Assignment required for tuple") p1)
 	| [< s >] -> error (Custom "Missing variable identifier") p1
 
-and parse_var_decl = parser
-	| [< name,t = parse_var_decl_head; eo = parse_var_assignment >] -> (name,t,eo)
+and parse_var_decl ?(const=false) = parser
+	| [< name,t,meta = parse_var_decl_head ~const:const; eo = parse_var_assignment >] -> (name,t,eo,meta)
 
 and inline_function = parser
 	| [< '(Kwd Inline,_); '(Kwd Function,p1) >] -> true, p1
@@ -2014,7 +2088,7 @@ and parse_destructure_obj_decl ds s =
 				| _ -> ds.globals <- (np, np)::ds.globals)
 			)
 
-and do_destructure_obj ?(split_block=true) ds p1 e2 =
+and do_destructure_obj ?(split_block=true) ?(const=false) ds p1 e2 =
 	let to_null p = ECast((mk_ident "null" p),None),p in
 	(*let untyped e = EUntyped e, (pos e) in*)
 	let untyped e = e in
@@ -2040,10 +2114,10 @@ and do_destructure_obj ?(split_block=true) ds p1 e2 =
 	in
 	let e_null = Some (to_null p2) in
 	let mk_vars (gacc, sacc) parent ds =
-		let gacc = List.fold_left  (fun acc ((n,p),_) -> (n, None, e_null)::acc) gacc ds.globals in
-		let gacc = List.fold_left  (fun acc ((n,p),_,_) -> (n, None, e_null)::acc) gacc ds.globals_def in
+		let gacc = List.fold_left  (fun acc ((n,p),_) -> (n, None, e_null, [])::acc) gacc ds.globals in
+		let gacc = List.fold_left  (fun acc ((n,p),_,_) -> (n, None, e_null, [])::acc) gacc ds.globals_def in
 		let vn,fn = ds.name in
-		let sacc = if (fn="") then sacc else ((vn, None, e_null)::sacc) in
+		let sacc = if (fn="") then sacc else ((vn, None, e_null, [])::sacc) in
 		(gacc, sacc)
 	in
 	let gvars, svars = for_all_ds mk_vars ([], []) [ds] in
@@ -2055,9 +2129,21 @@ and do_destructure_obj ?(split_block=true) ds p1 e2 =
 		| _ -> 
 			let n = mk_fresh_name struct_var_name_prefix in
 			ds.name <- (n, "");
-			(n, None, (Some e2))::gvars
+			(n, None, (Some e2), [])::gvars
 	in
-	let gvars = (EVars (List.rev gvars), p1) in
+	let gvars = List.rev gvars in
+	let cvars =
+		if const then
+			List.map (fun (n, _, eo, _) -> 
+				let p = match eo with
+					| Some(e) -> pos e
+					| _ -> p2
+				in
+				EField ((mk_ident n p), "__to_const__"), p
+			) gvars
+		else []
+	in
+	let gvars = (EVars (gvars), p1) in
 	let rec loop pn acc wl =
 		match wl with
 		| [] -> acc
@@ -2114,11 +2200,11 @@ and do_destructure_obj ?(split_block=true) ds p1 e2 =
 	let b2 = loop None b2 [ds] in
 	let b2 = for_all_ds (fun acc p ds -> List.fold_left (fun acc ((n,p),_,e) -> (if_null_assign (mk_ident n p) e)::acc) acc ds.globals_def) b2 [ds] in
 	let b2 = List.rev b2 in
-	if split_block then
-		let b2 = (EBlock b2), p2 in
-		EBlock ([(mk_ident struct_global_var_marker null_pos);b2;gvars]), p2
-	else
-		EBlock ((mk_ident struct_global_var_marker null_pos)::gvars::b2), p2
+	let b2 =
+		if split_block then [(EBlock b2), p2;gvars]
+		else gvars::b2
+	in
+	EBlock ((mk_ident struct_global_var_marker null_pos)::(cvars@b2)), p2
 
 and adapt_fn_with_structure fn_params fn_body =
 	if !use_extended_syntax then
@@ -2279,6 +2365,13 @@ and expr s =
 				| [< t = parse_type_hint; '(PClose,p2); s >] -> 
 					let _=pop_flag() in
 					expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
+				| [< '(Comma, _); es=parse_tuple [e]; s >] -> 
+					(match s with parser
+					| [<' (PClose,p2); s>] ->
+						let cnt = List.length es in
+						let t = mk_type [] "Tuple" [] (Some("Tuple"^(string_of_int cnt))) in
+						expr_next (ENew (t, List.rev es), punion p1 p2) s
+					| [< >] -> serror())
 				| [< >] -> serror())
 		in
 		if !use_extended_syntax then
@@ -2381,7 +2474,7 @@ and expr s =
 	| [< '(Kwd Untyped,p1); e = expr; s>] -> (EUntyped e,punion p1 (pos e))
 	| [< '(Dollar v,p); s >] -> expr_next (EConst (Ident ("$"^v)),p) s
 
-and sl_id = ("$@sl",None,None)
+and sl_id = ("$@sl",None,None,[])
 
 and expr_next e1 = parser
 	| [< '(BrOpen,p1) when is_dollar_ident e1; eparam = expr; '(BrClose,p2); s >] ->
@@ -2453,8 +2546,8 @@ and expr_next e1 = parser
 						EFunction (None,f), pos e
 					in
 					let mk_fn_from_l l e =
-						let l = List.filter(fun (n,o,t) -> (n<>"") && (n<>"$@sl")) l in
-						let l = List.map(fun (n,o,t) -> let b,n = opt_ident n in n,b,o,t) l in
+						let l = List.filter(fun (n,o,t,m) -> (n<>"") && (n<>"$@sl")) l in
+						let l = List.map(fun (n,o,t,m) -> let b,n = opt_ident n in n,b,o,t) l in
 						mk_fn (List.rev l) e2
 					in
 					(match e1 with
@@ -2500,7 +2593,7 @@ and expr_next e1 = parser
 									t
 								else None
 							in
-							Some(sl_id::(n1,t1,None)::[], p)
+							Some(sl_id::(n1,t1,None,[])::[], p)
 						else None
 					| EVars (x::xs), p when x=sl_id -> Some(x::xs, p)
 					| _ -> None
@@ -2524,7 +2617,7 @@ and expr_next e1 = parser
 										match Stream.peek s with
 										| Some((DblDot, _)) -> parse_type_opt s
 										| _ -> None
-									in expr_next (EVars(sl_id::(n2,t2,None)::l), punion p p2) s
+									in expr_next (EVars(sl_id::(n2,t2,None,[])::l), punion p p2) s
 								else e1
 							| [< >] -> e1)
 						| _ -> e1
@@ -2536,7 +2629,9 @@ and expr_next e1 = parser
 and parse_guard = parser
 	| [< '(Kwd If,p1); '(POpen,_); e = expr; '(PClose,_); >] -> e
 
-and parse_switch_cases eswitch cases = parser
+and parse_switch_cases eswitch cases =
+	let noDbldot s = push_flag noDbldotFlag in
+	parser
 	| [< '(Kwd Default,p1); '(DblDot,_); s >] ->
 		let b = (try block [] s with Display e -> display (ESwitch (eswitch,cases,Some (Some e)),punion (pos eswitch) (pos e))) in
 		let b = match b with
@@ -2546,7 +2641,8 @@ and parse_switch_cases eswitch cases = parser
 		let l , def = parse_switch_cases eswitch cases s in
 		(match def with None -> () | Some _ -> error Duplicate_default p1);
 		l , Some b
-	| [< '(Kwd Case,p1); el = psep Comma expr; eg = popt parse_guard; '(DblDot,_); s >] ->
+	| [< '(Kwd Case,p1); _=noDbldot; el = psep Comma expr; eg = popt parse_guard; '(DblDot,_); s >] ->
+		let _=pop_flag() in
 		(match el with
 		| [] -> error (Custom "case without a pattern is not allowed") p1
 		| _ ->

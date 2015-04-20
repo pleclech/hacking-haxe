@@ -320,12 +320,10 @@ and decision_tree = {
 
 let alloc_var =
 	let uid = ref 0 in
-	(fun n t -> incr uid; { v_name = n; v_type = t; v_id = !uid; v_capture = false; v_extra = None; v_meta = [] })
+	(fun ?(meta=[]) n t -> incr uid; { v_name = n; v_type = t; v_id = !uid; v_capture = false; v_extra = None; v_meta = meta })
 
 let alloc_unbound_var n t =
-	let v = alloc_var n t in
-	v.v_meta <- [Meta.Unbound,[],null_pos];
-	v
+	alloc_var ~meta:[Meta.Unbound,[],null_pos] n t
 
 let alloc_mid =
 	let mid = ref 0 in

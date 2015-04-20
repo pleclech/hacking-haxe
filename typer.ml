@@ -1339,6 +1339,9 @@ let rec type_ident_raise ?(imported_enums=true) ctx i p mode =
 	| _ ->
 	try
 		let v = PMap.find i ctx.locals in
+		if mode=MSet && Meta.has Meta.Const v.v_meta then
+			AKNo i
+		else
 		(match v.v_extra with
 		| Some (params,e) ->
 			let t = monomorphs params v.v_type in
@@ -1439,15 +1442,28 @@ and type_field ?(resume=false) ctx e i p mode =
 			|| List.exists (fun (_,_,cf) -> cf.cf_name = i) a.a_unops
 			|| List.exists (fun cf -> cf.cf_name = i) a.a_array
 		in
-		if not ctx.untyped then begin
+		let expr() = AKExpr (mk (TField (e,FDynamic i)) (mk_mono()) p)
+		in
+		if not ctx.untyped then
 			match t with
 			| TAbstract(a,_) when has_special_field a ->
 				(* the abstract field is not part of the field list, which is only true when it has no expression (issue #2344) *)
 				display_error ctx ("Field " ^ i ^ " cannot be called directly because it has no expression") p;
+				expr()
 			| _ ->
-				display_error ctx (string_error i (string_source t) (s_type (print_context()) t ^ " has no field " ^ i)) p;
-		end;
-		AKExpr (mk (TField (e,FDynamic i)) (mk_mono()) p)
+				let error() =
+					display_error ctx (string_error i (string_source t) (s_type (print_context()) t ^ " has no field " ^ i)) p;
+					expr()
+				in
+				if i="__to_const__" then
+					match e.eexpr with
+					| TLocal v ->
+						v.v_meta <- (Meta.Const, [], p) :: v.v_meta;
+						AKExpr(mk (TBlock []) ctx.t.tvoid p)
+					| _ -> error()
+				else
+					error()
+		else expr()
 	in
 	match follow e.etype with
 	| TInst (c,params) ->
@@ -2057,6 +2073,24 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 		in
 		loop e.etype
 	in
+	let from_abstract a tl p =
+		if Meta.has Meta.ForwardValue a.a_meta then
+			let t = Abstract.get_underlying_type a tl in
+			let k = classify t in
+			match k with
+			 | KInt | KFloat | KString -> Some (k, t)
+			 	(*try
+				 	let f = PMap.find "get_value" c.cl_fields in
+				 	let e = make_call ctx (mk (TField (e,FInstance (c,[],f))) t p) [] t p in
+				 	Some (k, t, e)
+				with Not_found ->
+					List.iter(fun cf -> print_string("::"^cf.cf_name^"\n")) c.cl_ordered_fields;
+					let pr = print_context() in
+					error ("Cannot add " ^ s_type pr e1.etype ^ " and " ^ s_type pr e2.etype ^ " missing field value") p*)
+			 | _ -> None
+		else
+			None
+	in
 	let mk_op e1 e2 t =
 		if op = OpAdd && (classify t) = KString then
 			let e1 = to_string e1 in
@@ -2067,6 +2101,10 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 	in
 	let make e1 e2 = match op with
 	| OpAdd ->
+		let add_error() =
+			let pr = print_context() in
+			error ("Cannot add " ^ s_type pr e1.etype ^ " and " ^ s_type pr e2.etype) p
+		in
 		mk_op e1 e2 (match classify e1.etype, classify e2.etype with
 		| KInt , KInt ->
 			tint
@@ -2109,14 +2147,37 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 		| KUnk, KParam t ->
 			unify ctx e1.etype tfloat e1.epos;
 			tfloat
+		| KAbstract _, KInt ->
+			unify ctx e1.etype tint e1.epos;
+			tint
+		| KAbstract _, KFloat ->
+			unify ctx e1.etype tfloat e1.epos;
+			tfloat
+		| KInt, KAbstract _ ->
+			unify ctx e2.etype tint e2.epos;
+			tint
+		| KFloat, KAbstract _ ->
+			unify ctx e2.etype tint e2.epos;
+			tfloat
+		| KAbstract (a1, tl1), KAbstract (a2, tl2) ->
+			(match from_abstract a1 tl1 e1.epos with
+			| None -> add_error()
+			| Some (k1, t1) ->
+				match from_abstract a2 tl2 e2.epos with
+				| None -> add_error()
+				| Some (k2, t2) ->
+					let t = match k1, k2 with
+					| KInt, KInt -> tint
+					| KInt, KFloat | KFloat, KInt | KFloat, KFloat -> tfloat
+					| _ -> add_error()
+					in t
+			)
 		| KAbstract _,_
 		| _,KAbstract _
 		| KParam _, _
 		| _, KParam _
 		| KOther, _
-		| _ , KOther ->
-			let pr = print_context() in
-			error ("Cannot add " ^ s_type pr e1.etype ^ " and " ^ s_type pr e2.etype) p
+		| _ , KOther -> add_error()
 		)
 	| OpAnd
 	| OpOr
@@ -2701,7 +2762,7 @@ and type_access ctx e p mode =
 
 and type_vars ctx vl p in_block =
 	let save = if in_block then (fun() -> ()) else save_locals ctx in
-	let vl = List.map (fun (v,t,e) ->
+	let vl = List.map (fun (v,t,e,m) ->
 		try
 			let t = Typeload.load_type_opt ctx p t in
 			let e = (match e with
@@ -2712,11 +2773,11 @@ and type_vars ctx vl p in_block =
 					Some e
 			) in
 			if v.[0] = '$' && ctx.com.display = DMNone then error "Variables names starting with a dollar are not allowed" p;
-			add_local ctx v t, e
+			add_local ~meta:m ctx v t, e
 		with
 			Error (e,p) ->
 				display_error ctx (error_msg e) p;
-				add_local ctx v t_dynamic, None
+				add_local ~meta:m ctx v t_dynamic, None
 	) vl in
 	save();
 
@@ -4798,7 +4859,7 @@ let type_macro ctx mode cpath f (el:Ast.expr list) p =
 			with Error (Custom _,_) ->
 				(* if it's not a constant, let's make something that is typed as haxe.macro.Expr - for nice error reporting *)
 				(EBlock [
-					(EVars ["__tmp",Some (CTPath ctexpr),Some (EConst (Ident "null"),p)],p);
+					(EVars ["__tmp",Some (CTPath ctexpr),Some (EConst (Ident "null"),p),[]],p);
 					(EConst (Ident "__tmp"),p);
 				],p)
 			) in
@@ -4843,7 +4904,7 @@ let type_macro ctx mode cpath f (el:Ast.expr list) p =
 						| _ ->
 							List.map Interp.decode_field (Interp.dec_array v)
 					) in
-					(EVars ["fields",Some (CTAnonymous fields),None],p)
+					(EVars ["fields",Some (CTAnonymous fields),None,[]],p)
 				| MMacroType ->
 					let t = if v = Interp.VNull then
 						mk_mono()
@@ -5041,6 +5102,8 @@ let rec create com =
 		| [TClassDecl c2 ] -> ctx.g.global_using <- c1 :: c2 :: ctx.g.global_using
 		| _ -> assert false);
 	| _ -> assert false);
+	let m = Typeload.load_module ctx ([],"Tuple") null_pos in
+	ctx.m.module_types <- m.m_types @ ctx.m.module_types;
 	ctx
 
 ;;

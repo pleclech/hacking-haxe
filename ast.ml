@@ -52,6 +52,7 @@ module Meta = struct
 		| ClassCode
 		| Commutative
 		| CompilerGenerated
+		| Const
 		| CoreApi
 		| CoreType
 		| CppFileCode
@@ -79,6 +80,7 @@ module Meta = struct
 		| FlatEnum
 		| Font
 		| Forward
+		| ForwardValue
 		| From
 		| FunctionCode
 		| FunctionTailCode
@@ -343,7 +345,7 @@ and expr_def =
 	| ECall of expr * expr list
 	| ENew of type_path * expr list
 	| EUnop of unop * unop_flag * expr
-	| EVars of (string * complex_type option * expr option) list
+	| EVars of (string * complex_type option * expr option * metadata) list
 	| EFunction of string option * func
 	| EBlock of expr list
 	| EFor of expr * expr
@@ -728,7 +730,7 @@ let map_expr loop (e,p) =
 	| ECall (e,el) -> ECall (loop e, List.map loop el)
 	| ENew (t,el) -> ENew (tpath t,List.map loop el)
 	| EUnop (op,f,e) -> EUnop (op,f,loop e)
-	| EVars vl -> EVars (List.map (fun (n,t,eo) -> n,opt ctype t,opt loop eo) vl)
+	| EVars vl -> EVars (List.map (fun (n,t,eo,m) -> n,opt ctype t,opt loop eo,m) vl)
 	| EFunction (n,f) -> EFunction (n,func f)
 	| EBlock el -> EBlock (List.map loop el)
 	| EFor (e1,e2) -> EFor (loop e1, loop e2)
@@ -760,9 +762,30 @@ let rec s_expr (e,_) =
 	| EBinop (op,e1,e2) -> s_expr e1 ^ s_binop op ^ s_expr e2
 	| ECall (e,el) -> s_expr e ^ "(" ^ (String.concat ", " (List.map s_expr el)) ^ ")"
 	| EField (e,f) -> s_expr e ^ "." ^ f
-	| EVars l -> "var "^(String.concat "," (List.map(fun (n,_,a) -> n ^ (match a with None->""|Some(e) -> "="^(s_expr e)) ) l))
+	| EVars l -> "var "^(String.concat "," (List.map(fun (n,_,a,_) -> n ^ (match a with None->""|Some(e) -> "="^(s_expr e)) ) l))
 	| EIf (e,e1,e2) -> "if (" ^ (s_expr e) ^ ") " ^ (s_expr e1) ^ (match e2 with Some(e) -> " else " ^ (s_expr e) | _ -> "")
 	| EBlock el -> "{\n" ^ (String.concat "\n" (List.map (fun (e) -> (s_expr e)) el)) ^ "\n}"
+	| _ -> "'???'"
+
+let s_constant_ast = function
+	| Int s -> "(Int "^s^")"
+	| Float s -> "(Float "^s^")"
+	| String s -> "(String "^"\"" ^ s_escape s ^ "\""^")"
+	| Ident s -> "(Ident "^s^")"
+	| Regexp (r,o) -> "~/" ^ r ^ "/"
+
+let rec s_expr_ast (e,_) =
+	match e with
+	| EConst c -> "(EConst " ^ (s_constant_ast c) ^ ")"
+	| EParenthesis e -> "(EParenthesis " ^ (s_expr_ast e) ^ ")"
+	| EArrayDecl el -> "(EArrayDecl " ^ (String.concat "," (List.map s_expr_ast el)) ^ ")"
+	| EObjectDecl fl -> "(EObjectDecl " ^ (String.concat "," (List.map (fun (n,e) -> n ^ ":" ^ (s_expr_ast e)) fl)) ^ ")"
+	| EBinop (op,e1,e2) -> "(EBinop " ^ s_expr_ast e1 ^ s_binop op ^ s_expr_ast e2 ^")"
+	| ECall (e,el) -> "(ECall " ^ s_expr_ast e ^ "(" ^ (String.concat ", " (List.map s_expr_ast el)) ^ ")"
+	| EField (e,f) -> "(EField " ^ s_expr_ast e ^ "." ^ f ^ ")"
+	| EVars l -> "(EVars "^(String.concat "," (List.map(fun (n,_,a,_) -> n ^ (match a with None->""|Some(e) -> "="^(s_expr_ast e)) ) l))
+	| EIf (e,e1,e2) -> "(EIf (" ^ (s_expr_ast e) ^ ") " ^ (s_expr_ast e1) ^ (match e2 with Some(e) -> " else " ^ (s_expr_ast e) | _ -> "")
+	| EBlock el -> "(EBlock \n" ^ (String.concat "\n" (List.map (fun (e) -> (s_expr_ast e)) el)) ^ "\n)"
 	| _ -> "'???'"
 
 let s_opt_expr se = match se with None -> "" | Some e -> s_expr e
