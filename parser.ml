@@ -1296,10 +1296,43 @@ and parse_class_field_resume tdecl s =
 		else
 			plist parse_class_field s
 	else try
-		let c = parse_class_field s in
-		c :: parse_class_field_resume tdecl s
+		if (!use_extended_syntax) then
+			let pcf s =
+				try
+					parse_class_field s
+				with 
+					| ContinueClassField(e, t) ->
+						let ci, i = match !cc_arg_defs with
+							| x::xs -> let i=List.length x.exprs in x,i
+							| _ -> serror()
+						in
+						(*let fn = EFunction(Some("inline_if" ^ string_of_int i), {f_params=[];f_args=[];f_type=None;f_expr=Some(e,p);}), p in*)
+						ci.exprs <- e::ci.exprs;
+						let n = match t with
+							| BrClose -> "}"
+							| _ -> ""
+						in {
+							cff_name = n;
+							cff_doc = None;
+							cff_meta = [];
+							cff_access = [];
+							cff_pos = null_pos;
+							cff_kind = empty_ffun;
+						}
+			in
+			let rec loop acc s = match s with parser
+				| [< v = pcf; s >] -> 
+					(match v.cff_name with
+					| "}" -> acc
+					| "" -> loop acc s
+					| _ -> loop (v::acc) s)
+				| [< >] -> acc
+			in
+			loop [] s
+		else
+			let c = parse_class_field s in
+			c :: parse_class_field_resume tdecl s
 	with 
-		| ContinueClassField _ -> parse_class_field_resume tdecl s
 		| Stream.Error _ | Stream.Failure ->
 		(* look for next variable/function or next type declaration *)
 		let rec junk k =
@@ -1557,6 +1590,7 @@ and push_flag_with_parser f = parser
 	| [< >] -> push_flag f
 
 and cc_block acc break s =
+	if break then acc, break else
 	try
 		(* because of inner recursion, we can't put Display handling in errors below *)
 		let e = try parse_cc_block_elt s with Display e -> display (EBlock (List.rev (e :: acc)),snd e) in
@@ -1941,17 +1975,18 @@ and parse_var_decls_next ?(const=false) vl = parser
 		end
 	| [< >] -> vl
 
-and parse_tuple_head index s =
+and parse_tuple_head ?(const=false) index s =
 	let name, t, meta = parse_var_decl_head s in
+	let meta = if const then (Meta.Const,[],null_pos)::meta else meta in
 	name, t, index, meta
 
-and parse_tuple_assigment_next vl index = parser
+and parse_tuple_assigment_next ?(const=false) vl index = parser
 	| [< '(Comma,p1); s; >] ->
 		(match Stream.peek s with
 		| Some(t, _)  when t=PClose -> vl
 		| _ -> 
 			(match s with parser 
-			| [< name,t, i, meta = parse_tuple_head index; s >] ->
+			| [< name,t, i, meta = parse_tuple_head ~const:const index; s >] ->
 				begin try
 					let vl = if name="_" then vl else (name, t, i, meta)::vl in
 					parse_tuple_assigment_next vl (i+1) s
@@ -1964,16 +1999,13 @@ and parse_tuple_assigment_next vl index = parser
 			| [< >] -> vl))
 	| [< >] -> vl
 
-and parse_tuple_assignment index = parser
-	[< name, t, i, meta = parse_tuple_head index; s >] ->
+and parse_tuple_assignment ?(const=false) index = parser
+	[< name, t, i, meta = parse_tuple_head ~const:const index; s >] ->
 		let acc = if name="_" then [] else [name, t, i, meta] in
-		parse_tuple_assigment_next acc (i+1) s
+		parse_tuple_assigment_next ~const:const acc (i+1) s
 
 and parse_var_decls ?(const=false) p1 = parser
-	| [< name,t, meta = parse_var_decl_head ~const:const; s >] ->
-		let eo = parse_var_assignment s in
-		List.rev (parse_var_decls_next ~const:const [name,t,eo,meta] s)
-	| [< '(POpen, p1); l=parse_tuple_assignment 1; '(PClose, p2); s >] ->
+	| [< '(POpen, p1); l=parse_tuple_assignment ~const:const 1; '(PClose, p2); s >] ->
 		(match parse_var_assignment s with
 		| Some(e) ->
 			List.map (fun (n,t,i,m) ->
@@ -1982,6 +2014,9 @@ and parse_var_decls ?(const=false) p1 = parser
 				n,t,e,m
 			) l
 		| _ -> error (Custom "Assignment required for tuple") p1)
+	| [< name,t, meta = parse_var_decl_head ~const:const; s >] ->
+		let eo = parse_var_assignment s in
+		List.rev (parse_var_decls_next ~const:const [name,t,eo,meta] s)
 	| [< s >] -> error (Custom "Missing variable identifier") p1
 
 and parse_var_decl ?(const=false) = parser
@@ -2364,6 +2399,7 @@ and expr s =
 					expr_next e s
 				| [< t = parse_type_hint; '(PClose,p2); s >] -> 
 					let _=pop_flag() in
+					!warning(s_expr e) (pos e);
 					expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
 				| [< '(Comma, _); es=parse_tuple [e]; s >] -> 
 					(match s with parser
@@ -2567,7 +2603,7 @@ and expr_next e1 = parser
 			| [< e2 = expr >] -> mk_binop e2
 			| [< >] -> serror())
 		with Display e2 ->
-			raise (Display (mk_binop e2)))
+			display (mk_binop e2))
 	| [< '(Unop op,p) when is_postfix e1 op; s >] ->
 		expr_next (EUnop (op,Postfix,e1), punion (pos e1) p) s
 	| [< '(Question,_); e2 = (expr_with_flag noDbldotFlag); '(DblDot,_); e3 = expr >] ->
@@ -2603,11 +2639,14 @@ and expr_next e1 = parser
 					(match Stream.npeek 2 s with
 						| [(PClose, _); (Binop OpArrow, _)] -> EVars(x::l), p
 						| [(Binop OpArrow, _); _] -> expr_next (EVars(x::l),p) s
-						| [(PClose, _); (tok, p)] ->
+						| [(PClose, p2); (tok, p)] ->
 							if tok=DblDot then begin
 								push_flag parseOptTypeFlag;
 								EVars(x::l), p
-							end else e1
+							end else
+								(match l with
+								| (n, Some(t), None, [])::[] when x=sl_id -> ECheckType(e1,t),punion p p2
+								| _ -> e1)
 						| [(tok, _); _] when !pis ->
 							(match s with parser
 							| [< '(Const (Ident n2),p2) ; s >] ->

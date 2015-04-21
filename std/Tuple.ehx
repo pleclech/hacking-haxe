@@ -1,107 +1,127 @@
-class Tuple();
+class Tuple(const arity);
 
 @:generic @:final
-class Tuple2<T1,T2>(const _1:T1,const _2:T2){
+class Tuple2<T1,T2>(const _1:T1,const _2:T2) extends Tuple(2){
 public function toString() return '($_1,$_2)';
+inline public function toArray():Array<Dynamic> return [_1,_2];
 }
 
 @:generic @:final
-class Tuple3<T1,T2,T3>(const _1:T1,const _2:T2,const _3:T3){
+class Tuple3<T1,T2,T3>(const _1:T1,const _2:T2,const _3:T3) extends Tuple(3){
 public function toString() return '($_1,$_2,$_3)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3];
 }
 
 @:generic @:final
-class Tuple4<T1,T2,T3,T4>(const _1:T1,const _2:T2,const _3:T3,const _4:T4){
+class Tuple4<T1,T2,T3,T4>(const _1:T1,const _2:T2,const _3:T3,const _4:T4) extends Tuple(4){
 public function toString() return '($_1,$_2,$_3,$_4)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4];
 }
 
 @:generic @:final
-class Tuple5<T1,T2,T3,T4,T5>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5){
+class Tuple5<T1,T2,T3,T4,T5>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5) extends Tuple(5){
 public function toString() return '($_1,$_2,$_3,$_4,$_5)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5];
 }
 
 @:generic @:final
-class Tuple6<T1,T2,T3,T4,T5,T6>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6){
+class Tuple6<T1,T2,T3,T4,T5,T6>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6) extends Tuple(6){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6];
 }
 
 @:generic @:final
-class Tuple7<T1,T2,T3,T4,T5,T6,T7>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7){
+class Tuple7<T1,T2,T3,T4,T5,T6,T7>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7) extends Tuple(7){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7];
 }
 
 @:generic @:final
-class Tuple8<T1,T2,T3,T4,T5,T6,T7,T8>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8){
+class Tuple8<T1,T2,T3,T4,T5,T6,T7,T8>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8) extends Tuple(8){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8];
 }
 
 @:generic @:final
-class Tuple9<T1,T2,T3,T4,T5,T6,T7,T8,T9>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9){
+class Tuple9<T1,T2,T3,T4,T5,T6,T7,T8,T9>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9) extends Tuple(9){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9];
 }
 
 @:generic @:final
-class Tuple10<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10){
+class Tuple10<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10) extends Tuple(10){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10];
 }
 
 @:generic @:final
-class Tuple11<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11){
+class Tuple11<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11) extends Tuple(11){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11];
 }
 
 @:generic @:final
-class Tuple12<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12){
+class Tuple12<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12) extends Tuple(12){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12];
 }
 
 @:generic @:final
-class Tuple13<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13){
+class Tuple13<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13) extends Tuple(13){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13];
 }
 
 @:generic @:final
-class Tuple14<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14){
+class Tuple14<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14) extends Tuple(14){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13,$_14)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14];
 }
 
 @:generic @:final
-class Tuple15<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15){
+class Tuple15<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15) extends Tuple(15){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13,$_14,$_15)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15];
 }
 
 @:generic @:final
-class Tuple16<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16){
+class Tuple16<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16) extends Tuple(16){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13,$_14,$_15,$_16)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16];
 }
 
 @:generic @:final
-class Tuple17<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17){
+class Tuple17<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17) extends Tuple(17){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13,$_14,$_15,$_16,$_17)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17];
 }
 
 @:generic @:final
-class Tuple18<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18){
+class Tuple18<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18) extends Tuple(18){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13,$_14,$_15,$_16,$_17,$_18)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18];
 }
 
 @:generic @:final
-class Tuple19<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18,T19>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18,const _19:T19){
+class Tuple19<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18,T19>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18,const _19:T19) extends Tuple(19){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13,$_14,$_15,$_16,$_17,$_18,$_19)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19];
 }
 
 @:generic @:final
-class Tuple20<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18,T19,T20>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18,const _19:T19,const _20:T20){
+class Tuple20<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18,T19,T20>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18,const _19:T19,const _20:T20) extends Tuple(20){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13,$_14,$_15,$_16,$_17,$_18,$_19,$_20)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19,_20];
 }
 
 @:generic @:final
-class Tuple21<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18,T19,T20,T21>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18,const _19:T19,const _20:T20,const _21:T21){
+class Tuple21<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18,T19,T20,T21>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18,const _19:T19,const _20:T20,const _21:T21) extends Tuple(21){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13,$_14,$_15,$_16,$_17,$_18,$_19,$_20,$_21)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19,_20,_21];
 }
 
 @:generic @:final
-class Tuple22<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18,T19,T20,T21,T22>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18,const _19:T19,const _20:T20,const _21:T21,const _22:T22){
+class Tuple22<T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,T14,T15,T16,T17,T18,T19,T20,T21,T22>(const _1:T1,const _2:T2,const _3:T3,const _4:T4,const _5:T5,const _6:T6,const _7:T7,const _8:T8,const _9:T9,const _10:T10,const _11:T11,const _12:T12,const _13:T13,const _14:T14,const _15:T15,const _16:T16,const _17:T17,const _18:T18,const _19:T19,const _20:T20,const _21:T21,const _22:T22) extends Tuple(22){
 public function toString() return '($_1,$_2,$_3,$_4,$_5,$_6,$_7,$_8,$_9,$_10,$_11,$_12,$_13,$_14,$_15,$_16,$_17,$_18,$_19,$_20,$_21,$_22)';
+inline public function toArray():Array<Dynamic> return [_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19,_20,_21,_22];
 }
-
