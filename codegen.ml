@@ -691,7 +691,13 @@ module AbstractCast = struct
 	let cast_stack = ref []
 
 	let make_static_call ctx c cf a pl args t p =
-		make_static_call ctx c cf (apply_params a.a_params pl) args t p
+		if Meta.has Meta.Generic cf.cf_meta then
+			let ta = TAnon { a_fields = c.cl_statics; a_status = ref (Statics c) } in
+			let ethis = mk (TTypeExpr (TClassDecl c)) ta p in
+			let fa = FStatic (c,cf) in
+			type_generic_function ~with_type:(WithType (apply_params a.a_params pl t)) ctx (ethis, fa) args p
+		else
+			make_static_call ctx c cf (apply_params a.a_params pl) args t p
 
 	let do_check_cast ctx tleft eright p =
 		let recurse cf f =

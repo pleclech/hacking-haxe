@@ -20,7 +20,14 @@ OCAMLOPT?=ocamlopt
 OCAMLC?=ocamlc
 LFLAGS=
 
-CFLAGS= -g -I libs/extlib -I libs/extc -I libs/neko -I libs/javalib -I libs/ziplib -I libs/swflib -I libs/xml-light -I libs/ttflib -I libs/ilib -I libs/objsize
+ifdef DEBUG
+	BYTECODE = 1
+	DFLAGS = -g
+else
+	DFLAGS =
+endif
+
+CFLAGS= ${DFLAGS} -I libs/extlib -I libs/extc -I libs/neko -I libs/javalib -I libs/ziplib -I libs/swflib -I libs/xml-light -I libs/ttflib -I libs/ilib -I libs/objsize
 
 LIBS=unix str libs/extlib/extLib libs/xml-light/xml-light libs/swflib/swflib \
 	libs/extc/extc libs/neko/neko libs/javalib/java libs/ziplib/zip \
@@ -80,7 +87,7 @@ libs:
 	make -C libs/objsize OCAMLOPT=$(OCAMLOPT) OCAMLC=$(OCAMLC) $(TARGET_FLAG)
 
 haxe: $(MODULES:=.$(MODULE_EXT))
-	$(COMPILER) -o $(OUTPUT) $(NATIVE_LIBS) $(NATIVE_LIB_FLAG) $(LFLAGS) $(LIBS:=.$(LIB_EXT)) $(MODULES:=.$(MODULE_EXT))
+	$(COMPILER) ${DFLAGS} -o $(OUTPUT) $(NATIVE_LIBS) $(NATIVE_LIB_FLAG) $(LFLAGS) $(LIBS:=.$(LIB_EXT)) $(MODULES:=.$(MODULE_EXT))
 
 haxelib:
 	(cd $(CURDIR)/extra/haxelib_src && $(CURDIR)/$(OUTPUT) haxelib.hxml && nekotools boot bin/haxelib.n)

@@ -304,6 +304,7 @@ class Test {
 			new TestOrder(),
 			new TestGADT(),
 			new TestGeneric(),
+			new TestAbstractGeneric(),
 			#if !no_pattern_matching
 			new TestMatch(),
 			#end

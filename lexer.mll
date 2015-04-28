@@ -64,6 +64,12 @@ let make_file file =
 		lstrings = [];
 	}
 
+let prev_is_space = ref false
+let cur_is_space = ref false
+
+let set_space b =
+	prev_is_space := !cur_is_space;
+	cur_is_space := b
 
 let cur = ref (make_file "")
 
@@ -77,7 +83,7 @@ let error e pos =
 let keywords =
 	let h = Hashtbl.create 3 in
 	List.iter (fun k -> Hashtbl.add h (s_keyword k) k)
-		[Function;Class;Static;Var;If;Else;While;Do;For;
+		[Function;Class;Static;Var;KConst;If;Else;While;Do;For;
 		Break;Return;Continue;Extends;Implements;Import;
 		Switch;Case;Default;Public;Private;Try;Untyped;
 		Catch;New;This;Throw;Extern;Enum;In;Interface;
@@ -97,6 +103,7 @@ let restore c =
 	cur := c
 
 let newline lexbuf =
+	set_space true;
 	let cur = !cur in
 	cur.lline <- cur.lline + 1;
 	cur.llines <- (lexeme_end lexbuf,cur.lline) :: cur.llines
@@ -204,6 +211,7 @@ let store lexbuf = Buffer.add_string buf (lexeme lexbuf)
 let add c = Buffer.add_string buf c
 
 let mk_tok t pmin pmax =
+	set_space false;
 	t , { pfile = !cur.lfile; pmin = pmin; pmax = pmax }
 
 let mk lexbuf t =
@@ -220,7 +228,13 @@ let invalid_char lexbuf =
 
 let ident = ('_'* ['a'-'z'] ['_' 'a'-'z' 'A'-'Z' '0'-'9']* | '_'+ | '_'+ ['0'-'9'] ['_' 'a'-'z' 'A'-'Z' '0'-'9']* )
 let idtype = '_'* ['A'-'Z'] ['_' 'a'-'z' 'A'-'Z' '0'-'9']*
-let integer = ['1'-'9'] ['0'-'9']* | '0'
+let integer = ['1'-'9'](['0'-'9' '_']+['0'-'9'] | ['0'-'9']*)| '0'
+let hexdigit = ['0'-'9' 'a'-'f' 'A'-'F']
+let hex = (hexdigit | '_')+ hexdigit | hexdigit+
+let bindigit = ['0' '1']
+let bin = (bindigit | '_')+ bindigit | bindigit+
+let octdigit = ['0'-'7']
+let oct = (octdigit | '_')+ octdigit | octdigit+
 
 rule skip_header = parse
 	| "\239\187\191" { skip_header lexbuf }
@@ -229,10 +243,12 @@ rule skip_header = parse
 
 and token = parse
 	| eof { mk lexbuf Eof }
-	| [' ' '\t']+ { token lexbuf }
+	| [' ' '\t']+ { set_space true; token lexbuf }
 	| "\r\n" { newline lexbuf; token lexbuf }
 	| '\n' | '\r' { newline lexbuf; token lexbuf }
-	| "0x" ['0'-'9' 'a'-'f' 'A'-'F']+ { mk lexbuf (Const (Int (lexeme lexbuf))) }
+	| "0x" hex { mk lexbuf (Const (Int (lexeme lexbuf))) }
+	| "0b" bin { mk lexbuf (Const (Int (lexeme lexbuf))) }
+	| "0o" oct { mk lexbuf (Const (Int (lexeme lexbuf))) }
 	| integer { mk lexbuf (Const (Int (lexeme lexbuf))) }
 	| integer '.' ['0'-'9']+ { mk lexbuf (Const (Float (lexeme lexbuf))) }
 	| '.' ['0'-'9']+ { mk lexbuf (Const (Float (lexeme lexbuf))) }
@@ -332,6 +348,11 @@ and token = parse
 			let v = lexeme lexbuf in
 			let v = String.sub v 1 (String.length v - 1) in
 			mk lexbuf (Dollar v)
+		}
+	| '`' ['`' '_' 'a'-'z' 'A'-'Z' '0'-'9']* {
+			let v = lexeme lexbuf in
+			let v = String.sub v 1 (String.length v - 1) in
+			mk lexbuf (Const (Ident v))
 		}
 	| ident { mk_ident lexbuf }
 	| idtype { mk lexbuf (Const (Ident (lexeme lexbuf))) }

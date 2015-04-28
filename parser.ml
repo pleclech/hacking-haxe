@@ -34,6 +34,8 @@ type error_msg =
 exception Error of error_msg * pos
 exception TypePath of string list * (string * bool) option * bool (* in import *)
 exception Display of expr
+exception ContinueClassField of expr * token
+exception BreakBlock
 
 let error_msg = function
 	| Unexpected t -> "Unexpected "^(s_token t)
@@ -153,6 +155,512 @@ let rec make_meta name params ((v,p2) as e) p1 =
 	| ETernary (e1,e2,e3) -> ETernary (make_meta name params e1 p1 , e2, e3), punion p1 p2
 	| _ ->
 		EMeta((name,params,p1),e),punion p1 p2
+
+(* vv extended syntax vv *)
+let use_extended_syntax = ref false
+
+let for_ctx = ref []
+
+let push_for_ctx a = for_ctx := a :: !for_ctx
+
+let pop_for_ctx() = match !for_ctx with
+	| [] -> ()
+	| x::xs -> for_ctx := xs
+
+let peek_for_ctx() = match !for_ctx with
+	| [] -> None
+	| x::xs -> x
+
+let warning : (string -> pos -> unit) ref = ref (fun _ _ -> assert false)
+
+(* for debugging purpose *)
+let dump_n_token n s =
+		if !use_extended_syntax then
+		let p = ref null_pos in
+		match Stream.npeek n s with
+			| [] -> ()
+			| x::xs ->
+				let m=List.map(fun (t,p2) -> p:=punion !p p2; ("< " ^ (s_token t) ^ " >")) (x::xs) in
+				!warning (String.concat " " m) !p
+
+let var_id = ref 0
+
+let mk_fresh_name ?(sfx="") pfx =
+		let i = !var_id in
+		var_id := i + 1;
+		pfx ^ (string_of_int i) ^ sfx
+
+let struct_var_name_prefix = "__st"
+
+let struct_global_var_marker = "$st$"
+
+let flags_stack = ref []
+let current_flag = ref 0
+
+let noDbldotFlag = 1
+let parseOptTypeFlag = 2
+let fieldsDeclarationFlag = 4
+let ccDefinedFlag = 8
+let hasLocalAccessFlag = 16
+let initInCCFlag = 32
+let discardPossibleClassFieldMemberFlag = 64
+
+let s_flag f =
+	let is f v = (f land v)<>0 in
+	let cl f v = f land (lnot v) in
+	let rec loop acc f =
+		if is f noDbldotFlag then loop ("noDbldotFlag"::acc) (cl f noDbldotFlag)
+		else if is f parseOptTypeFlag then loop ("parseOptTypeFlag"::acc) (cl f parseOptTypeFlag)
+		else if is f fieldsDeclarationFlag then loop ("fieldsDeclarationFlag"::acc) (cl f fieldsDeclarationFlag)
+		else if is f ccDefinedFlag then loop ("ccDefinedFlag"::acc) (cl f ccDefinedFlag)
+		else if is f hasLocalAccessFlag then loop ("hasLocalAccessFlag"::acc) (cl f hasLocalAccessFlag)
+		else if is f initInCCFlag then loop ("initInCCFlag"::acc) (cl f initInCCFlag)
+		else if is f discardPossibleClassFieldMemberFlag then loop ("discardPossibleClassFieldMemberFlag"::acc) (cl f discardPossibleClassFieldMemberFlag)
+		else acc
+	in 
+	let acc = loop [] f in
+	String.concat "|" acc
+
+let get_flag() = !current_flag 
+
+let is_flag_set f = (!current_flag land f)<>0
+
+let set_flag f = current_flag := !current_flag lor f
+
+let clear_flag f = current_flag := !current_flag land (lnot f)
+
+let push_flag f = set_flag f; flags_stack := !current_flag::!flags_stack
+
+let push_not_flag f = clear_flag f; flags_stack := !current_flag::!flags_stack
+
+let pop_flag() = 
+	let f = match !flags_stack with
+	| [] -> 0
+	| x::xs -> flags_stack := xs; x
+	in
+	current_flag := f;
+	f
+
+
+type destructure_name = string * pos
+type destructure_elm = {
+	mutable name: string * string;
+	mutable globals_def: (destructure_name * destructure_name * expr) list;
+	mutable globals:  (destructure_name * destructure_name) list;
+	mutable locals: (destructure_name * destructure_name) list;
+	mutable protected: bool;
+	mutable structures: destructure_elm list;
+}
+
+let mk_structure_elm n = {name=n; globals_def=[]; globals=[]; locals=[]; structures=[]; protected=false;}
+
+let mk_ident n p = (EConst(Ident n), p)
+let mk_string n p = (EConst(String n), p)
+
+type cc_arg_mode =
+	| Read
+	| Write
+
+type scope_def_from =
+	| SDFClass of string
+	| SDFFunction of string
+	| SDFOther
+
+type field_type =
+	| NormalField
+	| LocalField
+	| PrivateField
+
+let s_from = function
+	| SDFClass s -> "class "^s
+	| SDFFunction s -> "function "^s
+	| SDFOther -> "other"
+
+type 'a def_value =  {ht:(string , 'a) Hashtbl.t; parent:'a def_node; from:scope_def_from;mutable exprs:expr list}
+and 'a def_node = Nil | DefValue of 'a def_value
+
+type cc_arg = {
+	mutable arg: access list * pos * (string * bool * complex_type option * expr option);
+	is_mutable : bool;
+	mutable mode : field_type;
+	mutable use_cnt: int;
+	mutable meta: metadata;
+}
+
+type cc_field_def = {
+	ccfd_access: access list;
+	ccfd_meta: metadata;
+	ccfd_mutable: bool;
+}
+
+type cc_param = {
+	cc_open_par : pos;
+	cc_close_par : pos;
+	cc_params : type_param list;
+	cc_args : cc_arg list;
+	cc_access : access list;
+}
+
+type cc_info = {
+	mutable cc_param : cc_param option;
+	mutable cc_super_args : pos * expr list option;
+}
+let cc_arg_defs:'a def_value list ref = ref []
+let cl_sym_defs:'a def_value list ref  = ref []
+
+let mk_def_value p f = {ht=Hashtbl.create 0; parent=p; from=f; exprs=[];}
+
+let get_def_parent = function
+	| [] -> Nil
+	| x::xs -> DefValue x
+
+let leave_scope s = if !use_extended_syntax then
+	match !s with
+	| [] -> ()
+	| x::xs -> s:=xs
+
+let push s e = s:=e::!s
+
+let enter_scope s f = if !use_extended_syntax then
+	push s (mk_def_value (get_def_parent !s) f)
+
+let is_cc_scope = function
+	| {parent=Nil;from=_ as f; _} ->
+		(match f with 
+		| SDFClass _ -> true
+		| _ -> false)
+	| _ -> false
+
+let find_in_scope ?(deep=true) s n =
+	if !use_extended_syntax then
+		if not deep then 
+			match !s with
+			| [] -> None
+			| x::xs -> 
+				try Some(Hashtbl.find x.ht n)
+				with Not_found -> None
+		else
+			let rec loop = function
+				| [] -> None
+				| x::xs -> 
+					try Some(Hashtbl.find x.ht n) 
+					with Not_found -> loop xs
+			in loop !s
+	else None
+
+let get_scope_for ?(deep=true) s n =
+	if !use_extended_syntax then
+		if not deep then 
+			match !s with
+			| [] -> None
+			| x::xs -> 
+				try
+					Hashtbl.find x.ht n;
+					Some(x)
+				with Not_found -> None
+		else
+			let rec loop = function
+				| [] -> None
+				| x::xs -> 
+					try 
+						Hashtbl.find x.ht n;
+						Some(x)
+					with Not_found -> loop xs
+			in loop !s
+	else None
+
+let mk_this p = mk_ident "this" p
+
+let mk_this_assign fn pfn =
+	let e_this = mk_this pfn in
+	let e_this = (EField (e_this, fn) , pfn) in
+	make_binop OpAssign e_this (mk_ident fn pfn)
+
+let mk_call fn fa pfn =	ECall (mk_ident fn pfn, fa), pfn
+
+let parse_cc_opt_access = parser
+	| [< '(Kwd Private, _) >] -> [APrivate]
+	| [< '(Kwd Public, _) >] -> [APublic]
+	| [< >] -> [APublic]
+
+let parse_cc_param_opt_access = parser
+	| [< '(Kwd Private, _) >] -> [APrivate]
+	| [< '(Kwd Public, _) >] -> [APublic]
+	| [< >] -> [APublic]
+
+let parse_cc_param_opt_modifier = parser
+	| [< '(Kwd Var, _) >] -> NormalField, true
+	| [< '(Kwd KConst, _) >] -> NormalField, false
+	| [< >] -> LocalField, false
+
+let get_opt_name = function
+	| None -> "", null_pos
+	| Some(n, p) -> n, p
+
+let mk_local_private v =
+	if v.mode=LocalField then begin
+		v.mode <- PrivateField;
+		let al, p, r = v.arg in
+		let al = List.filter(fun a -> a<>APublic && a<>APrivate) al in
+		let l = List.length al in
+		(*print_string ("mk private:"^(string_of_int l)^"\n");*)
+		v.meta <- (Meta.Private, [], p) :: v.meta;
+		v.arg <- (APrivate::al), p, r
+	end
+
+let add_cl_sym_def ?(new_scope:scope_def_from option=None) ?(field_def:cc_field_def option=None) s p = 
+	if !use_extended_syntax && not !in_macro then
+		let shadowing v pos opt_adder =
+			let tp = match v.arg with
+				| _,p,_ -> p
+			in
+			let printer file line = Printf.sprintf "%d:" line in
+			let tp = Lexer.get_error_pos printer tp in
+			if (v.use_cnt=0 && v.mode=LocalField) then begin
+				!warning (s ^ " is shadowing constructor parameter declared at " ^ tp)  pos;
+				match opt_adder with
+				| Some(adder) -> adder()
+				| _ -> ()
+			end else begin
+				mk_local_private v;
+				error (Custom (s ^ " is overriding constructor parameter declared at " ^ tp)) pos
+			end
+		in
+		match field_def with
+		| None ->
+				let scope = cl_sym_defs in
+				let _ = match !scope with 
+				| [] -> ()
+				| x::xs when s<>"" ->
+					(*println("try to add '"^s^" into "^(s_from x.from));*)
+					let add() = Hashtbl.add x.ht s p; in
+					if is_cc_scope x then begin
+						(*println("add_cl_sym_def:"^s);*)
+						let cf = find_in_scope cc_arg_defs s ~deep:false in
+						match cf with
+						| Some v ->
+							if not (v.mode=LocalField) then
+								let tp = match v.arg with
+								| _,p,_ -> p
+								in
+								let printer file line = Printf.sprintf "%d:" line in
+								let tp = Lexer.get_error_pos printer tp in
+								error (Custom ("can't redeclared constructor parameter " ^ s ^ " declared at " ^ tp)) p
+							else
+								shadowing v p (Some add)
+						| None -> add()
+					end else
+						let cf = find_in_scope cc_arg_defs s ~deep:false in
+						(match cf with
+						| Some v ->
+								let tp = match v.arg with
+								| _,p,_ -> p
+								in
+								let printer file line = Printf.sprintf "%d:" line in
+								let tp = Lexer.get_error_pos printer tp in
+								!warning (s ^ " is shadowing constructor parameter declared at " ^ tp)  p;
+								add()
+						| None -> add())
+				| _ -> ()
+				in
+				(match new_scope with
+				| Some f -> enter_scope scope f
+				| _ -> ())
+		| Some {ccfd_access=_ as al; ccfd_mutable=_ as im; ccfd_meta=_ as meta} ->
+			let cf = find_in_scope cc_arg_defs s ~deep:false in
+			let add v = match !cc_arg_defs with x::xs -> (*println("adding in class field '"^s^" into "^(s_from x.from));*) Hashtbl.add x.ht s v | _ -> () in
+			(match cf with
+			| Some v ->
+				mk_local_private v;
+				shadowing v p None
+			| None -> add {arg=al, p ,(s, false, None, None);is_mutable=im;mode=NormalField;use_cnt=0;meta=meta;})
+
+let exists_in_scope ?(deep=true) s n =
+	if (!use_extended_syntax) then
+		if not deep then 
+			match !s with
+			| [] -> false
+			| x::xs -> Hashtbl.mem x.ht n
+		else
+			let rec loop = function
+				| [] -> false
+				| x::xs -> 
+					if Hashtbl.mem x.ht n then true 
+					else loop xs
+			in loop !s
+	else false
+
+let use_def ?(check_scope=true) has_local_access s =
+	if (!use_extended_syntax && not !in_macro) then
+		let sv = if check_scope then find_in_scope cl_sym_defs s else None in
+		let cv = find_in_scope cc_arg_defs ~deep:false s in
+	(*print_string (s ^ " : " ^ (string_of_bool check_scope) ^ " , " ^ (string_of_bool has_local_access) ^ "\n");*)
+		let incr = match cv with
+			| Some cf ->
+				set_flag initInCCFlag;
+				(*print_string ("find in cc arg " ^ s ^ "[" ^ (s_flag !current_flag) ^ "\n");*)
+				if not has_local_access then begin
+					mk_local_private cf;
+					cf.use_cnt <- cf.use_cnt + 1;
+				end
+			| _ -> ()
+		in
+		match sv with
+	    	| None -> incr
+	    	| Some _ -> set_flag initInCCFlag
+
+let use_cc_arg s m = 
+	if (!use_extended_syntax && not !in_macro) then
+		match !cc_arg_defs with
+			| [] -> ()
+			| x::xs ->
+				try
+					let cf = Hashtbl.find x.ht s in
+					let v = get_scope_for cl_sym_defs s
+					in match v with 
+					| None -> ()
+					| Some(v) when is_cc_scope v ->
+						(match m with
+						| Read -> cf.use_cnt <- cf.use_cnt + 1
+						| Write ->
+							if (cf.is_mutable) then 
+								cf.use_cnt <- cf.use_cnt + 1
+							else
+								match cf.arg with
+								| _, p , (n, _, _, _) -> error (Custom ("can't write into immutable argument " ^ n)) p)
+					| _ -> ()
+				with Not_found -> ()
+
+let mk_type pack name params sub =
+	{
+		tpackage = List.rev pack;
+		tname = name;
+		tparams = params;
+		tsub = sub;
+	}
+
+let mk_type_inf pack =
+	mk_type pack "Dynamic" ([TPType(CTPath {tpackage=[];tname="_";tparams=[];tsub=None;})]) None
+
+let mk_cc_fields fields =
+	let mk_field = function
+		| {arg=ac, p, (n, _, t, e); is_mutable=_ as im; meta=_ as m; _} ->
+			let t =
+				if t=None then Some(CTPath (mk_type_inf []))
+				else t
+			in
+			let k = 
+				if (im) then FVar(t, e)
+				else FProp("default", "never", t, e)
+			in
+			{
+				cff_name = n;
+				cff_doc = None;
+				cff_meta = [(Meta.AllowWrite , [mk_ident "new" p], p)] @ m;
+				cff_access = ac;
+				cff_pos = p;
+				cff_kind = k;
+			}
+	in
+	List.map mk_field fields
+
+
+let mk_cc_init cc p1 p2 =
+    let filter_field = function
+    	| {mode=_ as m; _} -> m<>LocalField
+    in
+	let fields =
+		match cc with
+      	| {cc_param=Some {cc_args=_ as ca; _}; _} -> ca
+      	| _ -> []
+    in
+    let fields = List.filter filter_field fields in
+    	let sp, cc_super_args, callsuper = match cc.cc_super_args with
+    	| p, None -> p, [], false
+    	| p, Some xs -> p, xs, true
+    	in
+		let super_idents = List.filter(function | EConst(Ident _), _ -> true | _ -> false) cc_super_args in
+		(match cc.cc_param with
+		| None -> 
+			(match super_idents with
+			| [] -> ()
+			| (EConst(Ident n), p1)::xs -> error (Custom ("undefined parameter " ^ n) ) p1
+			| _ -> ())
+		| Some(cp) ->
+			let exists_ident n = function
+				| {arg=(_, _ , (n1, _, _, _)); _} when (n1=n) -> true
+				| _ -> false
+			in
+			let check_ident = function
+				| EConst(Ident n), p1  when n<>"null"-> if (not (List.exists (exists_ident n) cp.cc_args)) then error (Custom ("undefined parameter " ^ n) ) p1
+				| _ -> ()
+			in
+			List.iter check_ident super_idents
+		);
+		let super =
+			if not callsuper then []
+			else let super = mk_call "super" cc_super_args sp in [super]
+		in
+		let mk_assign = function
+		| {arg=(_, p, (n, _, _, _)); _} -> mk_this_assign n p
+		in
+		let assigns = match cc.cc_param with
+			| None -> []
+			| Some(cp) -> (List.map mk_assign fields)
+		in
+		let code = 
+			match !cc_arg_defs with
+			| x::_ -> 
+				(*println("fields.len:"^string_of_int(List.length x.exprs));*)
+				let rec loop acc fields = match fields with
+				| [] -> acc
+				| y::ys ->
+					let i = List.length ys in
+				 	(*let call = mk_call ("if" ^ (string_of_int i)) [] null_pos in
+					loop (y::call::acc) ys *)
+					loop (y::acc) ys
+				in
+				let exprs = x.exprs in
+				x.exprs <- [];
+				loop [] exprs
+			| _ -> []
+		in
+		let init = super @ List.rev_append assigns code
+		in
+		let fields = mk_cc_fields fields in
+		let mk_new ac cp args p1 p2 = 
+			let f =  
+				{
+					f_params = cp;
+					f_args = args;
+					f_type = None;
+					f_expr = Some(EBlock init, p2);
+				} 
+			in
+				{
+					cff_name = "new";
+					cff_doc = None;
+					cff_meta = [];
+					cff_access = ac;
+					cff_pos = punion p1 p2;
+					cff_kind = FFun f;
+				}
+			in
+			match cc.cc_param with
+			| None -> if (init == []) then fields else fields @ [mk_new [APublic] [] [] p1 p2]
+			| Some(cp) ->
+				let mk_arg = function
+					| {arg=(_, _, a); _} -> a
+				in 
+				let args = List.map mk_arg cp.cc_args in
+				List.rev_append fields [mk_new cp.cc_access cp.cc_params args cp.cc_open_par cp.cc_close_par]
+	
+let add_cc_to_fields cc p1 p2 fl =
+	if (!use_extended_syntax) then
+		(mk_cc_init cc p1 p2) @ fl
+	else fl
+
+(* ^^ extended syntax ^^ *)
 
 let reify in_macro =
 	let cur_pos = ref None in
@@ -369,7 +877,7 @@ let reify in_macro =
 			) [] p in
 			expr "EUnop" [op;to_bool (flag = Postfix) p;loop e]
 		| EVars vl ->
-			expr "EVars" [to_array (fun (v,t,e) p ->
+			expr "EVars" [to_array (fun (v,t,e,m) p ->
 				let fields = [
 					"name", to_string v p;
 					"type", to_opt to_ctype t p;
@@ -507,6 +1015,13 @@ let rec psep sep f = parser
 		v :: loop s
 	| [< >] -> []
 
+let opt_ident s =
+	let l = String.length s in
+	if l=0 then false, ""
+	else 
+		if (String.get s 0)='?' then true, String.sub s 1 (l-1)
+		else  false, s
+
 let ident = parser
 	| [< '(Const (Ident i),p) >] -> i,p
 
@@ -588,6 +1103,30 @@ and parse_type_decls pack acc s =
 		) acc;
 		raise (TypePath (pack,Some(name,true),b))
 
+and parse_opt_class_body p1 =
+	if (!use_extended_syntax) then begin
+		push_flag fieldsDeclarationFlag;
+		let e = parser
+		| [< '(Semicolon,p) >] -> [], p
+		| [< '(BrOpen,_); fl, p2 = parse_class_fields false p1 >] ->
+			let allow_init cf = cf.cff_meta <- (Meta.AllowInitInCC,[],null_pos) :: cf.cff_meta in
+			List.iter (fun c -> match c with | {cff_kind=FVar _; } as cf -> allow_init cf | {cff_kind=FProp _; } as cf -> allow_init cf | _ -> ()) fl;
+			fl, p2
+		in
+		let _=pop_flag() in
+		e
+	end else parser
+		| [< '(BrOpen,_); fl, p2 = parse_class_fields false p1 >] -> fl, p2
+
+and to_pseudo_private cn fl =
+	let tfr_field cf =
+		if Meta.has Meta.Private cf.cff_meta then begin
+			let ac = APrivate::(List.filter(fun c -> (c<>APrivate)&&(c<>APublic)) cf.cff_access) in
+			cf.cff_access <- ac;
+			cf.cff_meta <- (Meta.Native, [mk_string ("_"^(String.lowercase cn)^"_"^cf.cff_name) cf.cff_pos], cf.cff_pos)::cf.cff_meta;
+		end
+	in List.iter tfr_field fl;
+
 and parse_type_decl s =
 	match s with parser
 	| [< '(Kwd Import,p1) >] -> parse_import s p1
@@ -603,7 +1142,13 @@ and parse_type_decl s =
 				d_flags = List.map snd c @ n;
 				d_data = l
 			}, punion p1 p2)
-		| [< n , p1 = parse_class_flags; name = type_name; tl = parse_constraint_params; hl = plist parse_class_herit; '(BrOpen,_); fl, p2 = parse_class_fields false p1 >] ->
+		| [< n , p1 = parse_class_flags; name = type_name; tl = parse_constraint_params; cc=parse_class_constructor name; hl = plist (parse_class_herit ~cc:cc); fl, p2 = parse_opt_class_body p1 >] ->
+			let fl = add_cc_to_fields cc p1 p2 fl in
+			to_pseudo_private name fl;
+			(*print_string ((String.concat "\n" (List.map (fun e -> s_field e) fl)) ^ "\n");*)
+			let _ = if is_flag_set ccDefinedFlag then pop_flag() else 0 in
+			leave_scope cl_sym_defs;
+			leave_scope cc_arg_defs;
 			(EClass {
 				d_name = name;
 				d_doc = doc;
@@ -706,13 +1251,89 @@ and parse_class_fields tdecl p1 s =
 	) in
 	l, p2
 
+and empty_ffun = FFun {
+		f_params = [];
+		f_args = [];
+		f_type = None;
+		f_expr = None;
+	}
+
 and parse_class_field_resume tdecl s =
 	if not (do_resume()) then
-		plist parse_class_field s
+		if (!use_extended_syntax) then
+			let pcf s =
+				try
+					parse_class_field s
+				with 
+					| ContinueClassField(e, t) ->
+						let ci, i = match !cc_arg_defs with
+							| x::xs -> let i=List.length x.exprs in x,i
+							| _ -> serror()
+						in
+						(*let fn = EFunction(Some("inline_if" ^ string_of_int i), {f_params=[];f_args=[];f_type=None;f_expr=Some(e,p);}), p in*)
+						ci.exprs <- e::ci.exprs;
+						let n = match t with
+							| BrClose -> "}"
+							| _ -> ""
+						in {
+							cff_name = n;
+							cff_doc = None;
+							cff_meta = [];
+							cff_access = [];
+							cff_pos = null_pos;
+							cff_kind = empty_ffun;
+						}
+			in
+			let rec loop acc s = match s with parser
+				| [< v = pcf; s >] -> 
+					(match v.cff_name with
+					| "}" -> acc
+					| "" -> loop acc s
+					| _ -> loop (v::acc) s)
+				| [< >] -> acc
+			in
+			loop [] s
+		else
+			plist parse_class_field s
 	else try
-		let c = parse_class_field s in
-		c :: parse_class_field_resume tdecl s
-	with Stream.Error _ | Stream.Failure ->
+		if (!use_extended_syntax) then
+			let pcf s =
+				try
+					parse_class_field s
+				with 
+					| ContinueClassField(e, t) ->
+						let ci, i = match !cc_arg_defs with
+							| x::xs -> let i=List.length x.exprs in x,i
+							| _ -> serror()
+						in
+						(*let fn = EFunction(Some("inline_if" ^ string_of_int i), {f_params=[];f_args=[];f_type=None;f_expr=Some(e,p);}), p in*)
+						ci.exprs <- e::ci.exprs;
+						let n = match t with
+							| BrClose -> "}"
+							| _ -> ""
+						in {
+							cff_name = n;
+							cff_doc = None;
+							cff_meta = [];
+							cff_access = [];
+							cff_pos = null_pos;
+							cff_kind = empty_ffun;
+						}
+			in
+			let rec loop acc s = match s with parser
+				| [< v = pcf; s >] -> 
+					(match v.cff_name with
+					| "}" -> acc
+					| "" -> loop acc s
+					| _ -> loop (v::acc) s)
+				| [< >] -> acc
+			in
+			loop [] s
+		else
+			let c = parse_class_field s in
+			c :: parse_class_field_resume tdecl s
+	with 
+		| Stream.Error _ | Stream.Failure ->
 		(* look for next variable/function or next type declaration *)
 		let rec junk k =
 			if k <= 0 then () else begin
@@ -757,7 +1378,7 @@ and parse_class_field_resume tdecl s =
 			| Kwd New :: Kwd Function :: _ ->
 				junk_tokens (k - 2);
 				parse_class_field_resume tdecl s
-			| Kwd Macro :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd Override :: _ | Kwd Dynamic :: _ | Kwd Inline :: _ ->
+			| Kwd Macro :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd KConst :: _ | Kwd Override :: _ | Kwd Dynamic :: _ | Kwd Inline :: _ ->
 				junk_tokens (k - 1);
 				parse_class_field_resume tdecl s
 			| BrClose :: _ when tdecl ->
@@ -854,7 +1475,7 @@ and parse_type_path s = parse_type_path1 [] s
 
 and parse_type_path1 pack = parser
 	| [< name, p = dollar_ident_macro pack; s >] ->
-		if is_lower_ident name then
+		if (is_lower_ident name) && (name <> "_") then
 			(match s with parser
 			| [< '(Dot,p) >] ->
 				if is_resuming p then
@@ -865,28 +1486,28 @@ and parse_type_path1 pack = parser
 				error (Custom "Type name should start with an uppercase letter") p
 			| [< >] -> serror())
 		else
-			let sub = (match s with parser
-				| [< '(Dot,p); s >] ->
-					(if is_resuming p then
-						raise (TypePath (List.rev pack,Some (name,false),false))
-					else match s with parser
-						| [< '(Const (Ident name),_) when not (is_lower_ident name) >] -> Some name
-						| [< '(Binop OpOr,_) when do_resume() >] ->
-							set_resume p;
-							raise (TypePath (List.rev pack,Some (name,false),false))
-						| [< >] -> serror())
-				| [< >] -> None
-			) in
-			let params = (match s with parser
-				| [< '(Binop OpLt,_); l = psep Comma parse_type_path_or_const; '(Binop OpGt,_) >] -> l
-				| [< >] -> []
-			) in
-			{
-				tpackage = List.rev pack;
-				tname = name;
-				tparams = params;
-				tsub = sub;
-			}
+			let name,params,sub =
+				if (name="_") then
+					"Dynamic", [TPType(CTPath {tpackage=[];tname="_";tparams=[];tsub=None;})], None
+				else
+					let sub = (match s with parser
+						| [< '(Dot,p); s >] ->
+							(if is_resuming p then
+								raise (TypePath (List.rev pack,Some (name,false),false))
+							else match s with parser
+								| [< '(Const (Ident name),_) when not (is_lower_ident name) >] -> Some name
+								| [< '(Binop OpOr,_) when do_resume() >] ->
+									set_resume p;
+									raise (TypePath (List.rev pack,Some (name,false),false))
+								| [< >] -> serror())
+						| [< >] -> None
+					) in
+					let params = (match s with parser
+						| [< '(Binop OpLt,_); l = psep Comma parse_type_path_or_const; '(Binop OpGt,_) >] -> l
+						| [< >] -> []
+					) in
+					name, params, sub
+			in mk_type pack name params sub
 	| [< '(Binop OpOr,_) when do_resume() >] ->
 		raise (TypePath (List.rev pack,None,false))
 
@@ -965,46 +1586,171 @@ and parse_enum_param = parser
 	| [< '(Question,_); name, _ = ident; t = parse_type_hint >] -> (name,true,t)
 	| [< name, _ = ident; t = parse_type_hint >] -> (name,false,t)
 
+and push_flag_with_parser f = parser
+	| [< >] -> push_flag f
+
+and cc_block acc break s =
+	if break then acc, break else
+	try
+		(* because of inner recursion, we can't put Display handling in errors below *)
+		let e = try parse_cc_block_elt s with Display e -> display (EBlock (List.rev (e :: acc)),snd e) in
+		cc_block (e :: acc) break s
+	with
+		| Stream.Failure -> (List.rev acc), break
+		| BreakBlock -> (List.rev acc), true
+		| Stream.Error _ ->
+			let tk , pos = (match Stream.peek s with None -> last_token s | Some t -> t) in
+			(!display_error) (Unexpected tk) pos;
+			cc_block acc break s
+		| Error (e,p) ->
+			(!display_error) e p;
+			cc_block acc break s
+
+and parse_cc_block_elt = parser
+	| [< e = expr; _ = semicolon >] -> e
+
+and parse_cc_code s =
+	if (!use_extended_syntax && (
+			match !cc_arg_defs with
+			| x::[] -> is_cc_scope x
+			| _ -> false
+		)) then begin
+			let do_block s =
+				push_flag discardPossibleClassFieldMemberFlag;
+				let b,x = cc_block [] false s in
+				let _ = pop_flag() in
+				let e = match b with
+					| [] -> EBlock b, null_pos
+					| x::[] -> x
+					| x::xs -> EBlock b, snd x
+				in
+				Some (e, x)
+			in
+			match s with parser
+			| [< '(BrOpen, _); db=do_block; '(BrClose, _)>] -> db
+			| [< >] -> do_block s
+		end
+	else None
+
+and add_cl_sym_def_with_parser name pos is_ns fd = parser
+		| [< >] -> add_cl_sym_def name pos ~new_scope:is_ns ~field_def:fd
+
+and parse_var_or_const = parser
+	| [< '(Kwd Var,p1) >] -> p1, false
+	| [< '(Kwd KConst,p1) >] -> p1, true
+
 and parse_class_field s =
 	let doc = get_doc s in
+	let setla s = push_flag hasLocalAccessFlag in
+	let clearla s = push_not_flag hasLocalAccessFlag in
+	let check_init() =
+		let ii = is_flag_set initInCCFlag in
+		if ii then clear_flag initInCCFlag;
+		ii
+	in
 	match s with parser
 	| [< meta = parse_meta; al = parse_cf_rights true []; s >] ->
-		let name, pos, k = (match s with parser
-		| [< '(Kwd Var,p1); name, _ = dollar_ident; s >] ->
+		let name, pos, k, meta, oal = (match s with parser
+		| [< p1, is_const = parse_var_or_const; name, pn = dollar_ident; _ = add_cl_sym_def_with_parser name pn None (Some {ccfd_access=al;ccfd_mutable=not is_const;ccfd_meta=meta}); s >] ->
 			(match s with parser
 			| [< '(POpen,_); i1 = property_ident; '(Comma,_); i2 = property_ident; '(PClose,_) >] ->
-				let t = parse_type_opt s in
-				let e , p2 = (match s with parser
-				| [< '(Binop OpAssign,_); e = toplevel_expr; p2 = semicolon >] -> Some e , p2
-				| [< '(Semicolon,p2) >] -> None , p2
-				| [< >] -> serror()
+				if is_const then serror() (*TODO better error msg*)
+				else
+					let t = parse_type_opt s in
+					let e , p2 = (match s with parser
+					| [< '(Binop OpAssign,_); _=setla; e = toplevel_expr; p2 = semicolon >] -> let _=pop_flag() in Some e , p2
+					| [< '(Semicolon,p2) >] -> None , p2
+					| [< >] -> serror()
 				) in
-				name, punion p1 p2, FProp (i1,i2,t, e)
+				name, punion p1 p2, FProp (i1,i2,t, e), meta, None
 			| [< t = parse_type_opt; s >] ->
-				let e , p2 = (match s with parser
-				| [< '(Binop OpAssign,_); e = toplevel_expr; p2 = semicolon >] -> Some e , p2
-				| [< '(Semicolon,p2) >] -> None , p2
+				let e , p2, t = (match s with parser
+				| [< '(Binop OpAssign,_); _=setla; e = toplevel_expr; p2 = semicolon >] ->
+					let is_init = check_init() in
+					let _ = pop_flag() in
+					let is_init = check_init() || is_init in
+					if is_init then begin
+						(*print_string ("init_in_cc"^name^"\n");*)
+						let ci, i = match !cc_arg_defs with
+							| x::xs -> let i=List.length x.exprs in x,i
+							| _ -> serror()
+						in
+						(*let fn = EFunction(Some("inline_if" ^ string_of_int i), {f_params=[];f_args=[];f_type=t;f_expr=Some e;}), p2 in*)
+						ci.exprs <- (make_binop OpAssign (mk_ident name p1) e)::ci.exprs;
+						let t = match t with
+						| None -> Some(CTPath (mk_type_inf []))
+						| _ -> t
+						in
+						None, p2, t
+					end else 
+						Some e , p2, t
+				| [< '(Semicolon,p2) >] -> None , p2, t
 				| [< >] -> serror()
 				) in
-				name, punion p1 p2, FVar (t,e))
-		| [< '(Kwd Function,p1); name = parse_fun_name; pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
-			let e, p2 = (match s with parser
-				| [< e = toplevel_expr; s >] ->
-					(try ignore(semicolon s) with Error (Missing_semicolon,p) -> !display_error Missing_semicolon p);
-					Some e, pos e
-				| [< '(Semicolon,p) >] -> None, p
-				| [< >] -> serror()
-			) in
+				let k, meta, oal =
+					if is_const then
+						let oal =
+							if not(List.mem APublic al || List.mem APrivate al) then
+								Some APublic
+							else None
+						in
+						let t =
+							if t=None then Some(CTPath (mk_type_inf []))
+							else t
+						in FProp("default", "never", t, e), (Meta.AllowWrite , [mk_ident "new" p1], p1)::meta, oal
+					else FVar(t, e), meta, None
+				in
+				name, punion p1 p2, k, meta, oal)
+		| [< '(Kwd Function,p1); name = parse_fun_name; _ = add_cl_sym_def_with_parser name p1 (Some (SDFFunction name)) (Some {ccfd_access=al;ccfd_mutable=false;ccfd_meta=meta}); pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
+			let e, p2 =
+				clearla s;
+				let r =
+					(match s with parser
+					| [< e = toplevel_expr; s >] ->
+						(try ignore(semicolon s) with Error (Missing_semicolon,p) -> !display_error Missing_semicolon p);
+						Some e, pos e
+					| [< '(Semicolon,p) >] -> None, p
+					| [< >] -> serror()
+					)
+				in
+				let _ = pop_flag() in
+				r
+			in
+			let al, e = match e with
+			| None -> al, e
+			| Some e ->
+				let al, e = adapt_fn_with_structure al e in
+				al, Some e
+			in
 			let f = {
 				f_params = pl;
 				f_args = al;
 				f_type = t;
 				f_expr = e;
 			} in
-			name, punion p1 p2, FFun f
-		| [< >] ->
-			if al = [] then raise Stream.Failure else serror()
+			name, punion p1 p2, FFun f, meta, None
+		| [< _=setla; cc=parse_cc_code; s >] ->
+			let _=pop_flag() in
+			let hx() = if al = [] then raise Stream.Failure else serror() in
+			match cc with
+			| None -> hx()
+			| Some(e, x) ->
+				(*print_string ("parse_cc=>" ^ (s_expr e) ^"\n");
+				print_string ((string_of_bool x) ^"\n");*)
+				if x then raise (ContinueClassField (e, Semicolon))
+				else
+				(match Stream.peek s with
+					(* | Some((At as t, _)) -> raise (ContinueClassField (e, t)) *)
+					| Some((BrClose as t, _)) -> raise (ContinueClassField (e, t))
+					| Some((Semicolon as t, _)) -> (*print_string(";\n");*) semicolon s;raise (ContinueClassField (e, t))
+					| Some(t, _) -> (*print_string("fail or resume with " ^(s_token t)^"\n");*) hx()
+					| _ -> hx())
 		) in
+		if is_flag_set initInCCFlag then clear_flag initInCCFlag;
+		let al = match oal with
+		| Some a -> a::al
+		| _ -> al
+		in
 		{
 			cff_name = name;
 			cff_doc = doc;
@@ -1028,9 +1774,20 @@ and parse_fun_name = parser
 	| [< name,_ = dollar_ident >] -> name
 	| [< '(Kwd New,_) >] -> "new"
 
-and parse_fun_param = parser
-	| [< '(Question,_); name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,true,t,c)
-	| [< name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,false,t,c)
+and parse_fun_param s =
+	let hx s = match s with parser
+		| [< '(Question,_); name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,true,t,c)
+		| [< name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,false,t,c)
+	in
+	if !use_extended_syntax then begin
+		match s with parser
+		| [< '(BrOpen, p1); ds=parse_top_destructure_obj; '(BrClose, p2); t = parse_type_opt >] ->
+			let name =  mk_fresh_name "__pst" in
+			let rhs = mk_ident name p1 in
+			let c = do_destructure_obj ~split_block:false ds (punion p1 p2) rhs in
+			(name, false, t, Some c)
+		| [< s >] -> hx s
+	end else hx s
 
 and parse_fun_param_value = parser
 	| [< '(Binop OpAssign,_); e = toplevel_expr >] -> Some e
@@ -1063,8 +1820,22 @@ and parse_constraint_param = parser
 			tp_constraints = ctl;
 		}
 
-and parse_class_herit = parser
-	| [< '(Kwd Extends,_); t = parse_type_path >] -> HExtends t
+and parse_class_herit ?(cc={cc_param=None;cc_super_args=null_pos, None;}) = parser
+	| [< '(Kwd Extends,_); t = parse_type_path; s>] -> 
+		if (!use_extended_syntax) then
+			match s with parser
+			| [< '(POpen,p1); s >] ->
+				enter_scope cc_arg_defs (SDFFunction "extends");
+				let e = 
+					match s with parser
+					| [<params = parse_call_params (mk_ident "super" p1); '(PClose,p2) >] ->
+						cc.cc_super_args <- p1, Some(params);
+						HExtends t
+				in
+					leave_scope cc_arg_defs;
+					e
+			| [< >] -> HExtends t
+		else HExtends t
 	| [< '(Kwd Implements,_); t = parse_type_path >] -> HImplements t
 
 and block1 = parser
@@ -1073,9 +1844,7 @@ and block1 = parser
 	| [< b = block [] >] -> EBlock b
 
 and block2 name ident p s =
-	match s with parser
-	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e) :: l)
-	| [< >] ->
+	let default s =
 		let e = expr_next (EConst ident,p) s in
 		try
 			let _ = semicolon s in
@@ -1085,12 +1854,36 @@ and block2 name ident p s =
 			| Error (err,p) ->
 				(!display_error) err p;
 				EBlock (block [e] s)
+	in
+	match s with parser
+	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e) :: l)
+	| [< s >] ->
+		if !use_extended_syntax then
+			match ident with
+			| Ident _ ->
+				(match Stream.peek s with
+				| Some(Comma, _) ->
+					let e = EConst ident,p in
+					EObjectDecl ((name,e) :: (parse_obj_decl s))
+				| _ -> default s)
+			| _ -> default s
+		else default s
 
 and block acc s =
 	try
 		(* because of inner recursion, we can't put Display handling in errors below *)
-		let e = try parse_block_elt s with Display e -> display (EBlock (List.rev (e :: acc)),snd e) in
-		block (e :: acc) s
+		let racc = ref acc in
+		(try 
+				let e = parse_block_elt s in
+				(match e with
+				| (EBlock ((EConst(Ident sn), p)::xs), _) when p=null_pos && sn=struct_global_var_marker ->
+					racc := xs @ !racc
+				| _ ->
+					racc := e :: !racc;
+					());
+		with
+			| Display e -> display (EBlock (List.rev (e :: !racc)),snd e));
+		block !racc s
 	with
 		| Stream.Failure ->
 			List.rev acc
@@ -1102,18 +1895,44 @@ and block acc s =
 			(!display_error) e p;
 			block acc s
 
-and parse_block_elt = parser
-	| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] ->
-		(EVars vl,punion p1 p2)
+and parse_block_elt =
+	let parse_var_or_const is_const p1 s =
+		let hx s = 
+			match s with parser
+			| [< vl = parse_var_decls ~const:is_const p1; p2 = semicolon >] -> (EVars vl,punion p1 p2)
+		in
+		if !use_extended_syntax then begin
+			match s with parser
+			| [< '(BrOpen, p1); ds=parse_top_destructure_obj ; '(BrClose, p2); '(Binop OpAssign, _); rhs=expr; _ = semicolon >] ->
+				do_destructure_obj ~const:is_const ds (punion p1 p2) rhs
+			| [< s >] -> hx s
+		end else hx s
+	in
+	parser
+	| [< '(Kwd KConst,p1); s >] -> parse_var_or_const true p1 s
+	| [< '(Kwd Var,p1); s >] -> parse_var_or_const false p1 s
 	| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e
 	| [< e = expr; _ = semicolon >] -> e
 
 and parse_obj_decl = parser
 	| [< '(Comma,_); s >] ->
-		(match s with parser
-		| [< name, _ = ident; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
-		| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
-		| [< >] -> [])
+		if !use_extended_syntax then
+			(match s with parser
+			| [< name, p = ident; s >] ->
+				(match Stream.peek s with
+				| Some (Comma, _) -> (name, mk_ident name p) :: (parse_obj_decl s)
+				| Some (BrClose, _) -> [name, mk_ident name p]
+				| _ ->
+					(match s with parser
+					| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
+					| [< >] -> []))
+			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
+			| [< >] -> [])
+		else
+			(match s with parser
+			| [< name, _ = ident; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
+			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
+			| [< >] -> [])
 	| [< >] -> []
 
 and parse_array_decl = parser
@@ -1124,8 +1943,17 @@ and parse_array_decl = parser
 	| [< >] ->
 		[]
 
-and parse_var_decl_head = parser
-	| [< name, _ = dollar_ident; t = parse_type_opt >] -> (name,t)
+and parse_tuple acc = parser
+	| [< e = expr; s >] ->
+		(match s with parser
+		| [< '(Comma,_); l = parse_tuple (e::acc) >] -> l
+		| [< >] -> e::acc)
+	| [< >] -> acc
+
+and parse_var_decl_head ?(const=false) = parser
+	| [< meta = parse_meta; name, p = dollar_ident; t = parse_type_opt >] ->
+		let meta = if const then (Meta.Const,[],p)::meta else meta in
+		(name,t,meta)
 
 and parse_var_assignment = parser
 	| [< '(Binop OpAssign,p1); s >] ->
@@ -1135,27 +1963,64 @@ and parse_var_assignment = parser
 		end
 	| [< >] -> None
 
-and parse_var_decls_next vl = parser
-	| [< '(Comma,p1); name,t = parse_var_decl_head; s >] ->
+and parse_var_decls_next ?(const=false) vl = parser
+	| [< '(Comma,p1); name,t,meta = parse_var_decl_head ~const:const; s >] ->
 		begin try
 			let eo = parse_var_assignment s in
-			parse_var_decls_next ((name,t,eo) :: vl) s
+			parse_var_decls_next ~const:const ((name,t,eo,meta) :: vl) s
 		with Display e ->
-			let v = (name,t,Some e) in
+			let v = (name,t,Some e, meta) in
 			let e = (EVars(List.rev (v :: vl)),punion p1 (pos e)) in
 			display e
 		end
-	| [< >] ->
-		vl
+	| [< >] -> vl
 
-and parse_var_decls p1 = parser
-	| [< name,t = parse_var_decl_head; s >] ->
+and parse_tuple_head ?(const=false) index s =
+	let name, t, meta = parse_var_decl_head s in
+	let meta = if const then (Meta.Const,[],null_pos)::meta else meta in
+	name, t, index, meta
+
+and parse_tuple_assigment_next ?(const=false) vl index = parser
+	| [< '(Comma,p1); s; >] ->
+		(match Stream.peek s with
+		| Some(t, _)  when t=PClose -> vl
+		| _ -> 
+			(match s with parser 
+			| [< name,t, i, meta = parse_tuple_head ~const:const index; s >] ->
+				begin try
+					let vl = if name="_" then vl else (name, t, i, meta)::vl in
+					parse_tuple_assigment_next vl (i+1) s
+				with Display e ->
+					let v = name,t,None, meta in
+					let vl = List.map (fun (n,t,i,m) -> n,t,None,m) vl in
+					let e = (EVars(List.rev (v :: vl)),punion p1 (pos e)) in
+					display e
+				end
+			| [< >] -> vl))
+	| [< >] -> vl
+
+and parse_tuple_assignment ?(const=false) index = parser
+	[< name, t, i, meta = parse_tuple_head ~const:const index; s >] ->
+		let acc = if name="_" then [] else [name, t, i, meta] in
+		parse_tuple_assigment_next ~const:const acc (i+1) s
+
+and parse_var_decls ?(const=false) p1 = parser
+	| [< '(POpen, p1); l=parse_tuple_assignment ~const:const 1; '(PClose, p2); s >] ->
+		(match parse_var_assignment s with
+		| Some(e) ->
+			List.map (fun (n,t,i,m) ->
+				let ef = EField (e, ("_" ^ (string_of_int i))) in
+				let e = Some (ef, pos e) in
+				n,t,e,m
+			) l
+		| _ -> error (Custom "Assignment required for tuple") p1)
+	| [< name,t, meta = parse_var_decl_head ~const:const; s >] ->
 		let eo = parse_var_assignment s in
-		List.rev (parse_var_decls_next [name,t,eo] s)
+		List.rev (parse_var_decls_next ~const:const [name,t,eo,meta] s)
 	| [< s >] -> error (Custom "Missing variable identifier") p1
 
-and parse_var_decl = parser
-	| [< name,t = parse_var_decl_head; eo = parse_var_assignment >] -> (name,t,eo)
+and parse_var_decl ?(const=false) = parser
+	| [< name,t,meta = parse_var_decl_head ~const:const; eo = parse_var_assignment >] -> (name,t,eo,meta)
 
 and inline_function = parser
 	| [< '(Kwd Inline,_); '(Kwd Function,p1) >] -> true, p1
@@ -1182,6 +2047,7 @@ and parse_macro_expr p = parser
 and parse_function p1 inl = parser
 	| [< name = popt dollar_ident; pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
 		let make e =
+			let al, e = adapt_fn_with_structure al e in
 			let f = {
 				f_params = pl;
 				f_type = t;
@@ -1195,7 +2061,289 @@ and parse_function p1 inl = parser
 		with
 			Display e -> display (make e))
 
-and expr = parser
+and parse_for_init s =
+	if !use_extended_syntax then
+		match s with parser
+		| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] -> (EVars vl,punion p1 p2), false
+		| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e, false
+		| [< e = expr; s >] ->
+			let efor =
+				match Stream.peek s with
+				| Some((t,_)) when t=Semicolon ->
+					Stream.junk s;
+					false
+				| _ -> true
+			in e, efor
+	else (expr s), true
+
+and parse_top_destructure_obj s =
+	parse_destructure_obj (mk_structure_elm ("","")) s
+
+and parse_destructure_obj ds s =
+	let pdds = parse_destructure_obj_decl ds in
+	let _ = psep Comma pdds s in
+	ds.globals <- List.rev ds.globals;
+	ds.globals_def <- List.rev ds.globals_def;
+	ds.structures <- List.rev ds.structures;
+	ds
+
+and parse_destructure_obj_def = parser
+	| [< '(Binop OpAssign, p); e2=expr >] -> Some e2
+	| [< >] -> None
+
+and parse_destructure_obj_decl ds s =
+	match s with parser
+	| [< name,p = dollar_ident; s >] ->
+		let np = name,p in
+			(match s with parser
+			| [< '(DblDot, _); s >] ->
+				(match s with parser
+				| [< '(BrOpen,p3); s >] ->
+					let fn = mk_fresh_name struct_var_name_prefix ~sfx:("_"^name) in
+					let nds =
+						let tmp = mk_structure_elm (fn, name) in
+						ds.structures <- tmp::ds.structures;
+						tmp
+					in
+					(match s with parser
+					| [< _=parse_destructure_obj nds; '(BrClose, p) >] ->
+						ds.protected <-  (nds.protected || ds.protected)
+					| [< >] -> serror())
+				| [< name2,p2=dollar_ident; def=parse_destructure_obj_def >] ->
+					(match def with
+					| Some e ->
+						ds.protected <- true; 
+						ds.globals_def <- ((name2,p2), np, e)::ds.globals_def
+					| _ -> ds.globals <- ((name2,p2), np)::ds.globals))
+			| [< s >] ->
+				(match parse_destructure_obj_def s with
+				| Some e ->
+					ds.protected <- true; 
+					ds.globals_def <- (np, np, e)::ds.globals_def
+				| _ -> ds.globals <- (np, np)::ds.globals)
+			)
+
+and do_destructure_obj ?(split_block=true) ?(const=false) ds p1 e2 =
+	let to_null p = ECast((mk_ident "null" p),None),p in
+	(*let untyped e = EUntyped e, (pos e) in*)
+	let untyped e = e in
+	let p2 = pos e2 in
+	let rec for_all_ds ?(parent=None) fn acc wl =
+		match wl with
+		| [] -> acc
+		| ds::xs ->
+			let acc = fn acc parent ds in
+			for_all_ds ~parent:(Some ds) fn acc (ds.structures@xs)
+	in
+	let mk_assign var base field = make_binop OpAssign var (EField (base, field) , pos base) in
+	let if_not_null o e1 e2 =
+		let p = pos o in
+		let test = (make_binop OpNotEq o (to_null p)) in
+		EIf (test, e1, e2), p
+	in
+	let if_null_assign o e1 =
+		let p = pos o in
+		let test = (make_binop OpEq o (to_null p)) in
+		let assign = make_binop OpAssign o e1 in
+		EIf (test, assign, None), p
+	in
+	let e_null = Some (to_null p2) in
+	let mk_vars (gacc, sacc) parent ds =
+		let gacc = List.fold_left  (fun acc ((n,p),_) -> (n, None, e_null, [])::acc) gacc ds.globals in
+		let gacc = List.fold_left  (fun acc ((n,p),_,_) -> (n, None, e_null, [])::acc) gacc ds.globals_def in
+		let vn,fn = ds.name in
+		let sacc = if (fn="") then sacc else ((vn, None, e_null, [])::sacc) in
+		(gacc, sacc)
+	in
+	let gvars, svars = for_all_ds mk_vars ([], []) [ds] in
+	let b2 = [(EVars (List.rev svars), p1) ] in
+	let gvars = match e2 with
+		| EConst (Ident n), _ ->
+			ds.name <- (n, "");
+			gvars
+		| _ -> 
+			let n = mk_fresh_name struct_var_name_prefix in
+			ds.name <- (n, "");
+			(n, None, (Some e2), [])::gvars
+	in
+	let gvars = List.rev gvars in
+	let cvars =
+		if const then
+			List.map (fun (n, _, eo, _) -> 
+				let p = match eo with
+					| Some(e) -> pos e
+					| _ -> p2
+				in
+				EField ((mk_ident n p), "__to_const__"), p
+			) gvars
+		else []
+	in
+	let gvars = (EVars (gvars), p1) in
+	let rec loop pn acc wl =
+		match wl with
+		| [] -> acc
+		| ds::xs ->
+			let vn,on = ds.name in
+			let obj_name = EConst(Ident vn) in
+			let eobj_name = obj_name, p2 in
+			let init_global acc g =
+				match g with
+				| (vn, vp), (fn, fp) ->
+					let var = (mk_ident vn vp) in
+					let base = (obj_name, fp) in
+					let assign = mk_assign var base fn in
+					let assign = untyped assign in
+					assign::acc
+			in
+			let init_global_def acc gd =
+				match gd with
+				| (vn, vp), (fn, fp), _ ->
+					let var = (mk_ident vn vp) in
+					let base = (obj_name, fp) in
+					let assign = mk_assign var base fn in
+					let assign = untyped assign in
+					assign::acc
+			in
+			let init_struct_assign acc ds =
+				let vn,on = ds.name in
+				(mk_assign (mk_ident vn p2) eobj_name on)::acc
+			in
+			let assign_first acc =
+				match pn with
+				| None -> acc
+				| Some e ->
+					let assign = mk_assign eobj_name e on in
+					let assign = untyped assign in
+					assign::acc
+			in
+			let acc = assign_first acc in
+			let acc, eobj_name =
+				if ds.protected then
+					let bt = 
+						let acc=List.fold_left init_global_def [] ds.globals_def in
+						let acc=List.fold_left init_struct_assign acc ds.structures in
+						acc
+					in
+					let t = EBlock bt, p2 in
+					((if_not_null eobj_name t None)::acc), None
+				else
+					acc, Some eobj_name
+			in
+			let acc = List.fold_left init_global acc ds.globals in
+			loop eobj_name acc (ds.structures@xs)
+	in 
+	let b2 = loop None b2 [ds] in
+	let b2 = for_all_ds (fun acc p ds -> List.fold_left (fun acc ((n,p),_,e) -> (if_null_assign (mk_ident n p) e)::acc) acc ds.globals_def) b2 [ds] in
+	let b2 = List.rev b2 in
+	let b2 =
+		if split_block then [(EBlock b2), p2;gvars]
+		else gvars::b2
+	in
+	EBlock ((mk_ident struct_global_var_marker null_pos)::(cvars@b2)), p2
+
+and adapt_fn_with_structure fn_params fn_body =
+	if !use_extended_syntax then
+		let p = pos fn_body in
+		let b = ref [] in
+		let apply (n,t,o,v)  =
+			match v with
+			| None -> (n,t,o,v)
+			| Some (EBlock ((EConst(Ident sn), p)::xs), _) when p=null_pos && sn=struct_global_var_marker ->
+				b := xs @ !b;
+				(n,t,o,None)
+			| _ -> (n,t,o,v)
+		in
+		let fn_params = List.map apply (fn_params) in
+		if (List.length !b)=0 then fn_params, fn_body
+		else
+			let b2 = match fn_body with
+				| EBlock b2, _ -> !b @ b2
+				| _ -> !b
+			in fn_params, (EBlock b2, p)
+	else fn_params, fn_body
+
+and expr_with_flag f s =
+ 	push_flag f;
+ 	expr s
+
+and expr_with_not_flag f s =
+ 	push_not_flag f;
+ 	expr s
+
+and last_parsed_token s = (match Stream.peek s with None -> last_token s | Some t -> t)
+
+and parse_cc_param_with_ac meta ac (mode, im) s =
+	match s with parser
+	| [< '(Question,_); name, pn = dollar_ident; t = parse_type_opt; c = parse_fun_param_value; s>] ->
+			let tok,pos = last_parsed_token s in 
+			{arg=(ac, punion pn pos, (name, true, t, c));mode=mode;is_mutable=im;use_cnt=0;meta=meta;}
+	| [< name, pn = dollar_ident; t = parse_type_opt; c = parse_fun_param_value; s>] ->
+			let tok,pos = last_parsed_token s in
+			{arg=(ac, punion pn pos, (name, false, t , c));mode=mode;is_mutable=im;use_cnt=0;meta=meta;}
+
+and parse_mandatory_type n p = parser
+	| [< t = parse_type_hint >] -> Some t
+	| [< >] -> error (Custom ("Explicit type required for field " ^ n)) p (* until i know how to resolve delayed type *)
+
+and parse_cc_param = parser
+	| [< meta = parse_meta; ac = parse_cc_param_opt_access; m = parse_cc_param_opt_modifier; s >] -> parse_cc_param_with_ac meta ac m s
+
+and parse_class_constructor n s =
+	enter_scope cl_sym_defs (SDFClass n);
+	let no_arg = {cc_param=None; cc_super_args=null_pos, None;} in
+	if !use_extended_syntax then
+		match s with parser
+			| [< ac = parse_cc_opt_access; cp = parse_constraint_params; s >] ->
+				(match s with parser
+				| [< '(POpen,o1); s >] ->
+					push_flag ccDefinedFlag; 
+					(match s with parser 
+					| [< al = psep Comma parse_cc_param;'(PClose,o2) >] ->
+						enter_scope cc_arg_defs (SDFClass n);
+						let scope = List.hd !cc_arg_defs in 
+						List.iter(fun arg -> match arg with {arg=(_, _ , (n1, _, _, _)); _} -> Hashtbl.add scope.ht n1 arg) al;
+						{
+							cc_param = Some 
+							{
+								cc_access = ac;
+								cc_params = cp;
+								cc_args = al;
+								cc_open_par = o1;
+								cc_close_par = o2;
+							};
+							cc_super_args = null_pos, None;
+						}
+					| [< >] -> no_arg)
+				| [< >] -> no_arg)
+			| [< >] -> no_arg
+	else no_arg
+
+and use_def_expr e =
+	if !use_extended_syntax && (is_flag_set ccDefinedFlag) then begin
+		let hla = is_flag_set hasLocalAccessFlag in
+		match e with
+		| EConst(Ident n), _ ->
+			(*print_string((s_expr e) ^ " : " ^ (string_of_bool hla)^"\n");*)
+			use_def hla n;
+			e
+		| EField ((EConst (Ident "this"), _), n), _ ->
+			(*print_string((s_expr e) ^ " : " ^ (string_of_bool hla)^"\n");*)
+			use_def ~check_scope:false false n;
+			e
+		| _ -> e
+	end else e
+
+and expr s =
+	if !use_extended_syntax && (is_flag_set discardPossibleClassFieldMemberFlag) then
+		(match Stream.peek s with
+		| Some (t, _) ->
+			(*print_string ((s_token t) ^"\n");*)
+			(match t with
+			 | At | Kwd Var | Kwd KConst | Kwd Public | Kwd Private | Kwd Inline | Kwd Static | Kwd Function -> raise BreakBlock
+			 | _ -> ())
+		| None -> ());
+
+	match s with parser
 	| [< (name,params,p) = parse_meta_entry; s >] ->
 		(try
 			make_meta name params (secure_expr s) p
@@ -1206,11 +2354,10 @@ and expr = parser
 		(match b with
 		| EObjectDecl _ -> expr_next e s
 		| _ -> e)
-	| [< '(Kwd Macro,p); s >] ->
-		parse_macro_expr p s
-	| [< '(Kwd Var,p1); v = parse_var_decl >] -> (EVars [v],p1)
-	| [< '(Const c,p); s >] -> expr_next (EConst c,p) s
-	| [< '(Kwd This,p); s >] -> expr_next (EConst (Ident "this"),p) s
+	| [< '(Kwd Macro,p); s >] -> parse_macro_expr p s
+	| [< '(Kwd Var,p1); v = parse_var_decl >] -> EVars [v], p1
+	| [< '(Const c,p); s >] ->  expr_next (use_def_expr (EConst c,p)) s
+	| [< '(Kwd This,p); s >] -> use_def_expr (expr_next (mk_this p) s)
 	| [< '(Kwd True,p); s >] -> expr_next (EConst (Ident "true"),p) s
 	| [< '(Kwd False,p); s >] -> expr_next (EConst (Ident "false"),p) s
 	| [< '(Kwd Null,p); s >] -> expr_next (EConst (Ident "null"),p) s
@@ -1233,10 +2380,45 @@ and expr = parser
 		(match s with parser
 		| [< al = psep Comma expr; '(PClose,p2); s >] -> expr_next (ENew (t,al),punion p1 p2) s
 		| [< >] -> serror())
-	| [< '(POpen,p1); e = expr; s >] -> (match s with parser
-		| [< '(PClose,p2); s >] -> expr_next (EParenthesis e, punion p1 p2) s
-		| [< t = parse_type_hint; '(PClose,p2); s >] -> expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
-		| [< >] -> serror())
+	| [< '(POpen,p1); s >] ->
+		let hx s = 
+			match s with parser
+			| [< e=(expr_with_not_flag noDbldotFlag); s >] ->
+			 (match s with parser
+				| [< '(PClose,p2); s >] ->
+					let e = (EParenthesis e, punion p1 p2) in
+					let pot = is_flag_set parseOptTypeFlag in
+					let _ = pop_flag() in
+					let e = 
+						if pot then
+							let _=pop_flag() in
+							let t = parse_type_opt s in
+							ECast (e,t), p2
+						else e
+					in
+					expr_next e s
+				| [< t = parse_type_hint; '(PClose,p2); s >] -> 
+					let _=pop_flag() in
+					!warning(s_expr e) (pos e);
+					expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
+				| [< '(Comma, _); es=parse_tuple [e]; s >] -> 
+					(match s with parser
+					| [<' (PClose,p2); s>] ->
+						let cnt = List.length es in
+						let t = mk_type [] "Tuple" [] (Some("Tuple"^(string_of_int cnt))) in
+						expr_next (ENew (t, List.rev es), punion p1 p2) s
+					| [< >] -> serror())
+				| [< >] -> serror())
+		in
+		if !use_extended_syntax then
+			match Stream.npeek 2 s with
+			| [(PClose, p2); (Binop OpArrow, _)] ->
+				Stream.junk s;
+				let p = punion p1 p2 in
+				expr_next (EConst (Ident ""), p) s
+			| _ -> hx s
+		else
+			hx s
 	| [< '(BkOpen,p1); l = parse_array_decl; '(BkClose,p2); s >] -> expr_next (EArrayDecl l, punion p1 p2) s
 	| [< '(Kwd Function,p1); e = parse_function p1 false; >] -> e
 	| [< '(Unop op,p1) when is_prefix op; e = expr >] -> make_unop op e p1
@@ -1255,12 +2437,40 @@ and expr = parser
 		| [< '(Const (Int i),p); e = expr_next (EConst (Int i),p) >] -> e
 		| [< '(Const (Float f),p); e = expr_next (EConst (Float f),p) >] -> e
 		| [< >] -> serror()) */*)
-	| [< '(Kwd For,p); '(POpen,_); it = expr; '(PClose,_); s >] ->
-		(try
-			let e = secure_expr s in
-			(EFor (it,e),punion p (pos e))
-		with
-			Display e -> display (EFor (it,e),punion p (pos e)))
+	| [< '(Kwd For,p); '(POpen,po); it,hx=parse_for_init; s >] ->
+		let efor s =
+			push_for_ctx None;
+			try
+				let e = secure_expr s in
+				pop_for_ctx();
+				(EFor (it,e),punion p (pos e))
+			with 
+				Display e ->
+					pop_for_ctx();
+					display (EFor (it,e),punion p (pos e))
+		in
+		if hx then
+			match s with parser [< '(PClose,_); s >] -> efor s
+		else
+			(match s with parser 
+			| [< cond=expr; '(Semicolon,_); stop=expr; '(PClose,_); s >] ->
+				push_for_ctx (Some stop);
+				(try
+					let e = secure_expr s in
+					let pe = pos e in
+					let e = EBlock (e::stop::[]), punion (pos stop) pe in
+					let w = EWhile (cond,e,NormalWhile),punion p pe in
+					pop_for_ctx();
+					EBlock (it::w::[]), pos w
+				with
+					Display e ->
+						let w =
+							let pe = pos e in
+							let e = EBlock (e::stop::[]), punion (pos stop) pe in
+							EWhile (cond,e,NormalWhile),punion p pe
+						in
+							pop_for_ctx();
+							display (EBlock (it::w::[]), pos w)))
 	| [< '(Kwd If,p); '(POpen,_); cond = expr; '(PClose,_); e1 = expr; s >] ->
 		let e2 = (match s with parser
 			| [< '(Kwd Else,_); e2 = expr; s >] -> Some e2
@@ -1276,19 +2486,31 @@ and expr = parser
 		(EIf (cond,e1,e2), punion p (match e2 with None -> pos e1 | Some e -> pos e))
 	| [< '(Kwd Return,p); e = popt expr >] -> (EReturn e, match e with None -> p | Some e -> punion p (pos e))
 	| [< '(Kwd Break,p) >] -> (EBreak,p)
-	| [< '(Kwd Continue,p) >] -> (EContinue,p)
+	| [< '(Kwd Continue,p) >] ->
+		let c = EContinue, p in
+		(match peek_for_ctx() with
+		| None -> c
+		| Some(e) -> (EBlock (e::c::[])), p)
 	| [< '(Kwd While,p1); '(POpen,_); cond = expr; '(PClose,_); s >] ->
+		for_ctx := None :: !for_ctx;
 		(try
 			let e = secure_expr s in
+			pop_for_ctx();
 			(EWhile (cond,e,NormalWhile),punion p1 (pos e))
 		with
-			Display e -> display (EWhile (cond,e,NormalWhile),punion p1 (pos e)))
-	| [< '(Kwd Do,p1); e = expr; '(Kwd While,_); '(POpen,_); cond = expr; '(PClose,_); s >] -> (EWhile (cond,e,DoWhile),punion p1 (pos e))
+			Display e ->
+				pop_for_ctx();
+				display (EWhile (cond,e,NormalWhile),punion p1 (pos e)))
+	| [< '(Kwd Do,p1); e = expr; '(Kwd While,_); '(POpen,_); cond = expr; '(PClose,_); >] ->
+		pop_for_ctx();
+		(EWhile (cond,e,DoWhile),punion p1 (pos e))
 	| [< '(Kwd Switch,p1); e = expr; '(BrOpen,_); cases , def = parse_switch_cases e []; '(BrClose,p2); s >] -> (ESwitch (e,cases,def),punion p1 p2)
 	| [< '(Kwd Try,p1); e = expr; cl = plist (parse_catch e); >] -> (ETry (e,cl),p1)
 	| [< '(IntInterval i,p1); e2 = expr >] -> make_binop OpInterval (EConst (Int i),p1) e2
-	| [< '(Kwd Untyped,p1); e = expr >] -> (EUntyped e,punion p1 (pos e))
+	| [< '(Kwd Untyped,p1); e = expr; s>] -> (EUntyped e,punion p1 (pos e))
 	| [< '(Dollar v,p); s >] -> expr_next (EConst (Ident ("$"^v)),p) s
+
+and sl_id = ("$@sl",None,None,[])
 
 and expr_next e1 = parser
 	| [< '(BrOpen,p1) when is_dollar_ident e1; eparam = expr; '(BrClose,p2); s >] ->
@@ -1335,25 +2557,120 @@ and expr_next e1 = parser
 		| [< e2 = secure_expr >] ->
 			make_binop OpGt e1 e2)
 	| [< '(Binop op,_); s >] ->
+		let mk_binop e2 =
+			let e = make_binop op e1 e2 in
+			if !use_extended_syntax then
+				match  op with
+				| OpArrow ->
+					let e1, t = match e1 with
+						| ECast (e, t), _ -> e, t
+						| _ -> e1, None
+					in
+					let mk_fn args e = 
+						let e =
+							match e with
+							| EBlock _, _ -> e
+							| _ -> (EReturn (Some e)), pos e
+						in
+						let f = {
+							f_params = [];
+							f_type = t;
+							f_args = args;
+							f_expr = Some e;
+							} 
+						in
+						EFunction (None,f), pos e
+					in
+					let mk_fn_from_l l e =
+						let l = List.filter(fun (n,o,t,m) -> (n<>"") && (n<>"$@sl")) l in
+						let l = List.map(fun (n,o,t,m) -> let b,n = opt_ident n in n,b,o,t) l in
+						mk_fn (List.rev l) e2
+					in
+					(match e1 with
+					| EConst(Ident id),p ->
+						 	if id="" then mk_fn [] e2
+						 	else
+							 	let o, id = opt_ident id in
+							 	if is_lower_ident id then mk_fn [(id,o,None,None)] e2
+							 	else e
+					| EParenthesis (EVars l, _), _ | EVars l,_ -> mk_fn_from_l l e2
+					| _ -> mk_fn [] e2) 
+				| _ -> e
+			else e
+		in
 		(try
 			(match s with parser
-			| [< e2 = expr >] -> make_binop op e1 e2
+			| [< e2 = expr >] -> mk_binop e2
 			| [< >] -> serror())
 		with Display e2 ->
-			raise (Display (make_binop op e1 e2)))
+			display (mk_binop e2))
 	| [< '(Unop op,p) when is_postfix e1 op; s >] ->
 		expr_next (EUnop (op,Postfix,e1), punion (pos e1) p) s
-	| [< '(Question,_); e2 = expr; '(DblDot,_); e3 = expr >] ->
+	| [< '(Question,_); e2 = (expr_with_flag noDbldotFlag); '(DblDot,_); e3 = expr >] ->
+		let _ = pop_flag() in
 		(ETernary (e1,e2,e3),punion (pos e1) (pos e3))
 	| [< '(Kwd In,_); e2 = expr >] ->
 		(EIn (e1,e2), punion (pos e1) (pos e2))
-	| [< >] -> e1
+	| [< s >] ->
+		if !use_extended_syntax && not (is_flag_set noDbldotFlag) then
+			let pis = ref !Lexer.prev_is_space in
+			match Stream.peek s with
+			| Some((Semicolon ,_)) | Some((Comma, _))| Some((BkClose, _)) -> e1
+			| Some((tok, _)) ->
+				let e1_args =
+					match e1 with
+					| EConst(Ident n1), p ->
+						let o,n = opt_ident n1 in
+						if is_lower_ident n then
+							let t1 = 
+								if tok=DblDot then
+									let t = parse_type_opt s in
+									pis := !Lexer.prev_is_space;
+									t
+								else None
+							in
+							Some(sl_id::(n1,t1,None,[])::[], p)
+						else None
+					| EVars (x::xs), p when x=sl_id -> Some(x::xs, p)
+					| _ -> None
+				in
+				(match e1_args with
+				| Some((x::l, p)) ->
+					(match Stream.npeek 2 s with
+						| [(PClose, _); (Binop OpArrow, _)] -> EVars(x::l), p
+						| [(Binop OpArrow, _); _] -> expr_next (EVars(x::l),p) s
+						| [(PClose, p2); (tok, p)] ->
+							if tok=DblDot then begin
+								push_flag parseOptTypeFlag;
+								EVars(x::l), p
+							end else
+								(match l with
+								| (n, Some(t), None, [])::[] when x=sl_id -> ECheckType(e1,t),punion p p2
+								| _ -> e1)
+						| [(tok, _); _] when !pis ->
+							(match s with parser
+							| [< '(Const (Ident n2),p2) ; s >] ->
+								let o,n = opt_ident n2 in
+								if is_lower_ident n then
+									let t2 =
+										match Stream.peek s with
+										| Some((DblDot, _)) -> parse_type_opt s
+										| _ -> None
+									in expr_next (EVars(sl_id::(n2,t2,None,[])::l), punion p p2) s
+								else e1
+							| [< >] -> e1)
+						| _ -> e1
+					)
+				| _ -> e1)
+			| _ -> e1
+		else e1
 
 and parse_guard = parser
-	| [< '(Kwd If,p1); '(POpen,_); e = expr; '(PClose,_); >] ->
-		e
+	| [< '(Kwd If,p1); '(POpen,_); e = expr; '(PClose,_); >] -> e
 
-and parse_switch_cases eswitch cases = parser
+and parse_switch_cases eswitch cases =
+	let noDbldot s = push_flag noDbldotFlag in
+	parser
 	| [< '(Kwd Default,p1); '(DblDot,_); s >] ->
 		let b = (try block [] s with Display e -> display (ESwitch (eswitch,cases,Some (Some e)),punion (pos eswitch) (pos e))) in
 		let b = match b with
@@ -1363,7 +2680,8 @@ and parse_switch_cases eswitch cases = parser
 		let l , def = parse_switch_cases eswitch cases s in
 		(match def with None -> () | Some _ -> error Duplicate_default p1);
 		l , Some b
-	| [< '(Kwd Case,p1); el = psep Comma expr; eg = popt parse_guard; '(DblDot,_); s >] ->
+	| [< '(Kwd Case,p1); _=noDbldot; el = psep Comma expr; eg = popt parse_guard; '(DblDot,_); s >] ->
+		let _=pop_flag() in
 		(match el with
 		| [] -> error (Custom "case without a pattern is not allowed") p1
 		| _ ->
@@ -1453,8 +2771,7 @@ and toplevel_expr s =
 	with
 		Display e -> e
 
-and secure_expr s =
-	match s with parser
+and secure_expr = parser
 	| [< e = expr >] -> e
 	| [< >] -> serror()
 
@@ -1512,9 +2829,14 @@ let parse ctx code =
 	let old = Lexer.save() in
 	let old_cache = !cache in
 	let mstack = ref [] in
+	let old_use_extended_syntax = !use_extended_syntax in
+	let old_for_ctx = !for_ctx in
 	cache := DynArray.create();
 	last_doc := None;
 	in_macro := Common.defined ctx Common.Define.Macro;
+	use_extended_syntax := ctx.Common.use_extended_syntax || Common.defined ctx Common.Define.UseExtendedSyntax;
+	warning := ctx.Common.warning;
+	for_ctx := [];
 	Lexer.skip_header code;
 
 	let sraw = Stream.from (fun _ -> Some (Lexer.token code)) in
@@ -1598,6 +2920,8 @@ let parse ctx code =
 		let l = parse_file s in
 		(match !mstack with p :: _ when not (do_resume()) -> error Unclosed_macro p | _ -> ());
 		cache := old_cache;
+		use_extended_syntax := old_use_extended_syntax;
+		for_ctx := old_for_ctx;
 		Lexer.restore old;
 		l
 	with
@@ -1606,8 +2930,12 @@ let parse ctx code =
 			let last = (match Stream.peek s with None -> last_token s | Some t -> t) in
 			Lexer.restore old;
 			cache := old_cache;
+			use_extended_syntax := old_use_extended_syntax;
+			for_ctx := old_for_ctx;
 			error (Unexpected (fst last)) (pos last)
 		| e ->
 			Lexer.restore old;
 			cache := old_cache;
+			use_extended_syntax := old_use_extended_syntax;
+			for_ctx := old_for_ctx;
 			raise e

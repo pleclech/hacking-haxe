@@ -27,6 +27,14 @@ open Typecore
 
 let locate_macro_error = ref true
 
+(* the parser can accept file *.hx and *.ehx *)
+let file_ext_allowed = ref [".hx"; ".ehx"]
+
+(* extended syntax will be available in the parser if true *)
+let use_extended_syntax ext = match ext with
+	| ".ehx" -> true
+	| _ ->  false
+
 (*
 	Build module structure : should be atomic - no type loading is possible
 *)
@@ -160,7 +168,7 @@ let make_module ctx mpath file tdecls loadp =
 						display_error ctx "Member property accessors must be get/set or never" p;
 						f
 					| FFun fu when f.cff_name = "new" && not stat ->
-						let init p = (EVars ["this",Some this_t,None],p) in
+						let init p = (EVars ["this",Some this_t,None,[]],p) in
 						let cast e = (ECast(e,None)),pos e in
 						let check_type e ct = (ECheckType(e,ct)),pos e in
 						let ret p = (EReturn (Some (cast (EConst (Ident "this"),p))),p) in
@@ -200,7 +208,7 @@ let make_module ctx mpath file tdecls loadp =
 				(match !decls with
 				| (TClassDecl c,_) :: _ ->
 					List.iter (fun m -> match m with
-						| ((Meta.Build | Meta.CoreApi | Meta.Allow | Meta.Access | Meta.Enum | Meta.Dce),_,_) ->
+						| ((Meta.Build | Meta.CoreApi | Meta.Allow | Meta.AllowWrite | Meta.Access | Meta.Enum | Meta.Dce),_,_) ->
 							c.cl_meta <- m :: c.cl_meta;
 						| _ ->
 							()
@@ -263,9 +271,9 @@ let apply_macro ctx mode path el p =
 *)
 let rec load_type_def ctx p t =
 	let no_pack = t.tpackage = [] in
-	let tname = (match t.tsub with None -> t.tname | Some n -> n) in
+	let nf, tname = (match t.tsub with None -> false, t.tname | Some n -> if n="_" then false, t.tname else true, n) in
 	try
-		if t.tsub <> None then raise Not_found;
+		if nf then raise Not_found;
 		List.find (fun t2 ->
 			let tp = t_path t2 in
 			tp = (t.tpackage,tname) || (no_pack && snd tp = tname)
@@ -392,7 +400,12 @@ let rec load_instance ctx t p allow_no_params =
 		end else if path = ([],"Dynamic") then
 			match t.tparams with
 			| [] -> t_dynamic
-			| [TPType t] -> TDynamic (load_complex_type ctx p t)
+			| [TPType t] -> 
+				(match t with
+				| CTPath tp ->
+					if (tp.tname="_") then mk_mono()
+					else TDynamic (load_complex_type ctx p t)
+				| _ -> TDynamic (load_complex_type ctx p t))
 			| _ -> error "Too many parameters for Dynamic" p
 		else begin
 			if not is_rest && List.length types <> List.length t.tparams then error ("Invalid number of type parameters for " ^ s_type_path path) p;
@@ -869,7 +882,7 @@ let check_overriding ctx c =
 				| _ -> ());
 				if ctx.com.config.pf_overload && (Meta.has Meta.Overload f2.cf_meta && not (Meta.has Meta.Overload f.cf_meta)) then
 					display_error ctx ("Field " ^ i ^ " should be declared with @:overload since it was already declared as @:overload in superclass") p
-				else if not (List.memq f c.cl_overrides) then
+				else if not (Meta.has Meta.Private f.cf_meta) && not (List.memq f c.cl_overrides) then
 					display_error ctx ("Field " ^ i ^ " should be declared with 'override' since it is inherited from superclass " ^ Ast.s_type_path csup.cl_path) p
 				else if not f.cf_public && f2.cf_public then
 					display_error ctx ("Field " ^ i ^ " has less visibility (public/private) than superclass one") p
@@ -1800,7 +1813,7 @@ let build_enum_abstract ctx c a fields p =
 		| _ ->
 			()
 	) fields;
-	EVars ["",Some (CTAnonymous fields),None],p
+	EVars ["",Some (CTAnonymous fields),None,[]],p
 
 let is_java_native_function meta = try
 	match Meta.get Meta.Native meta with
@@ -1872,7 +1885,7 @@ let init_class ctx c p context_init herits fields =
 	let get_fields() = !fields in
 	build_module_def ctx (TClassDecl c) c.cl_meta get_fields context_init (fun (e,p) ->
 		match e with
-		| EVars [_,Some (CTAnonymous f),None] ->
+		| EVars [_,Some (CTAnonymous f),None, _] ->
 			List.iter (fun f ->
 				if List.mem AMacro f.cff_access then
 					(match ctx.g.macros with
@@ -2014,7 +2027,8 @@ let init_class ctx c p context_init herits fields =
 				| Some (csup,_) ->
 					(* this can happen on -net-lib generated classes if a combination of explicit interfaces and variables with the same name happens *)
 					if not (csup.cl_interface && Meta.has Meta.CsNative c.cl_meta) then
-						error ("Redefinition of variable " ^ cf.cf_name ^ " in subclass is not allowed. Previously declared at " ^ (Ast.s_type_path csup.cl_path) ) p
+						if not (has_meta Meta.Private cf.cf_meta) then
+							error ("Redefinition of variable " ^ cf.cf_name ^ " in subclass is not allowed. Previously declared at " ^ (Ast.s_type_path csup.cl_path) ) p
 		end;
 		let t = cf.cf_type in
 
@@ -2061,16 +2075,20 @@ let init_class ctx c p context_init herits fields =
 						let e = match Optimizer.make_constant_expression ctx e with
 							| Some e -> e
 							| None ->
-								let rec has_this e = match e.eexpr with
-									| TConst TThis ->
-										display_error ctx "Cannot access this or other member field in variable initialization" e.epos;
-									| TLocal v when (match ctx.vthis with Some v2 -> v == v2 | None -> false) ->
-										display_error ctx "Cannot access this or other member field in variable initialization" e.epos;
-									| _ ->
-									Type.iter has_this e
-								in
-								has_this e;
-								e
+								if has_meta Meta.AllowInitInCC cf.cf_meta then begin
+									(*cf.cf_meta <- ((Meta.Custom "non_const"),[],null_pos) :: cf.cf_meta;*)
+									e
+								end else
+									let rec has_this e = match e.eexpr with
+										| TConst TThis ->
+											display_error ctx "Cannot access this or other member field in variable initialization" e.epos;
+										| TLocal v when (match ctx.vthis with Some v2 -> v == v2 | None -> false) ->
+											display_error ctx "Cannot access this or other member field in variable initialization" e.epos;
+										| _ ->
+										Type.iter has_this e
+									in
+									has_this e;
+									e
 						in
 						e
 					| Var v when v.v_read = AccInline ->
@@ -2911,7 +2929,7 @@ let rec init_module_type ctx context_init do_init (decl,p) =
 		let init () = List.iter (fun f -> f()) !context_init in
 		build_module_def ctx (TEnumDecl e) e.e_meta get_constructs init (fun (e,p) ->
 			match e with
-			| EVars [_,Some (CTAnonymous fields),None] ->
+			| EVars [_,Some (CTAnonymous fields),None,_] ->
 				constructs := List.map (fun f ->
 					let args, params, t = (match f.cff_kind with
 					| FVar (t,None) -> [], [], t
@@ -3165,8 +3183,19 @@ let resolve_module_file com m remap p =
 				with Not_found -> x
 			) in
 			String.concat "/" (x :: l) ^ "/" ^ name
-	) ^ ".hx" in
-	let file = Common.find_file com file in
+	) in
+	let file =
+		let rec loop = function
+			| [] -> raise (Error (Module_not_found m,p))
+			| h :: t ->
+				try
+					let file = Common.find_file com (file ^ h) in
+						com.use_extended_syntax <- use_extended_syntax h;
+						file
+				with
+					Not_found -> loop t
+		in loop !file_ext_allowed
+	in
 	let file = (match String.lowercase (snd m) with
 	| "con" | "aux" | "prn" | "nul" | "com1" | "com2" | "com3" | "lpt1" | "lpt2" | "lpt3" when Sys.os_type = "Win32" ->
 		(* these names are reserved by the OS - old DOS legacy, such files cannot be easily created but are reported as visible *)
