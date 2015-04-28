@@ -157,6 +157,8 @@ let get_pattern_locals_ref : (typer -> Ast.expr -> Type.t -> (string, tvar * pos
 let get_constructor_ref : (typer -> tclass -> t list -> Ast.pos -> (t * tclass_field)) ref = ref (fun _ _ _ _ -> assert false)
 let cast_or_unify_ref : (typer -> t -> texpr -> Ast.pos -> texpr) ref = ref (fun _ _ _ _ -> assert false)
 let find_array_access_raise_ref : (typer -> tabstract -> tparams -> texpr -> texpr option -> pos -> (tclass_field * t * t * texpr * texpr option)) ref = ref (fun _ _ _ _ _ _ -> assert false)
+let type_generic_function_ref : (typer -> texpr * tfield_access -> texpr list -> ?using_param:texpr option -> with_type -> pos -> texpr) ref = ref (fun _ _ _ ?(using_param=None) _ _ -> assert false)
+
 
 (* Source: http://en.wikibooks.org/wiki/Algorithm_implementation/Strings/Levenshtein_distance#OCaml *)
 let levenshtein a b =
@@ -289,6 +291,8 @@ let type_expr ctx e with_type = (!type_expr_ref) ctx e with_type
 let unify_min ctx el = (!unify_min_ref) ctx el
 
 let match_expr ctx e cases def with_type p = !match_expr_ref ctx e cases def with_type p
+
+let type_generic_function ctx (e,fa) el ?(using_param=None) ?(with_type=NoValue) p = !type_generic_function_ref ctx (e,fa) el ~using_param:using_param with_type p
 
 let make_static_call ctx c cf map args t p =
 	let ta = TAnon { a_fields = c.cl_statics; a_status = ref (Statics c) } in

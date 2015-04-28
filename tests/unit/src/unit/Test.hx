@@ -1,5 +1,12 @@
 package unit;
 
+#if (!macro && emscripten)
+import cpp.link.StaticStd;
+import cpp.link.StaticRegexp;
+import cpp.link.StaticSqlite;
+import cpp.link.StaticZlib;
+#end
+
 @:expose("unit.Test")
 @:keepSub
 #if as3
@@ -297,6 +304,7 @@ class Test {
 			new TestOrder(),
 			new TestGADT(),
 			new TestGeneric(),
+			new TestAbstractGeneric(),
 			#if !no_pattern_matching
 			new TestMatch(),
 			#end

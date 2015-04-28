@@ -1897,6 +1897,89 @@ let unify_int ctx e k =
 	with Codegen.Generic_Exception (msg,p) ->
 		error msg p)
 
+let type_generic_function2 ctx (e,fa) el ?(using_param=None) with_type p =
+	let c,tl,cf,stat = match fa with
+		| FInstance(c,tl,cf) -> c,tl,cf,false
+		| FStatic(c,cf) -> c,[],cf,true
+		| _ -> assert false
+	in
+	if cf.cf_params = [] then error "Function has no type parameters and cannot be generic" p;
+	let monos = List.map (fun _ -> mk_mono()) cf.cf_params in
+	let map t = apply_params cf.cf_params monos t in
+	let map t = if stat then map t else apply_params c.cl_params tl (map t) in
+	let t = map cf.cf_type in
+	let args,ret = match t,using_param with
+		| TFun((_,_,ta) :: args,ret),Some e ->
+			let ta = if not (Meta.has Meta.Impl cf.cf_meta) then ta
+			else match follow ta with TAbstract(a,tl) -> Abstract.get_underlying_type a tl | _ -> assert false
+			in
+			(* manually unify first argument *)
+			unify ctx e.etype ta p;
+			args,ret
+		| TFun(args,ret),None -> args,ret
+		| _ ->  error "Invalid field type for generic call" p
+	in
+	begin match with_type with
+		| WithType t -> unify ctx ret t p
+		| WithTypeResume t -> (try unify_raise ctx ret t p with Error (Unify l,_) -> raise (WithTypeError(l,p)))
+		| _ -> ()
+	end;
+	begin try
+		check_constraints ctx cf.cf_name cf.cf_params monos map false p
+	with Unify_error l ->
+		display_error ctx (error_msg (Unify l)) p
+	end;
+	(try
+		let gctx = Codegen.make_generic ctx cf.cf_params monos p in
+		let name = cf.cf_name ^ "_" ^ gctx.Codegen.name in
+		let unify_existing_field tcf pcf = try
+			unify_raise ctx tcf t p
+		with Error(Unify _,_) as err ->
+			display_error ctx ("Cannot create field " ^ name ^ " due to type mismatch") p;
+			display_error ctx "Conflicting field was defined here" pcf;
+			raise err
+		in
+		let cf2 = try
+			let cf2 = if stat then
+				let cf2 = PMap.find name c.cl_statics in
+				unify_existing_field cf2.cf_type cf2.cf_pos;
+				cf2
+			else
+				let cf2 = PMap.find name c.cl_fields in
+				unify_existing_field cf2.cf_type cf2.cf_pos;
+				cf2
+			in
+			cf2
+		with Not_found ->
+			let cf2 = mk_field name t cf.cf_pos in
+			if stat then begin
+				c.cl_statics <- PMap.add name cf2 c.cl_statics;
+				c.cl_ordered_statics <- cf2 :: c.cl_ordered_statics
+			end else begin
+				if List.memq cf c.cl_overrides then c.cl_overrides <- cf2 :: c.cl_overrides;
+				c.cl_fields <- PMap.add name cf2 c.cl_fields;
+				c.cl_ordered_fields <- cf2 :: c.cl_ordered_fields
+			end;
+			ignore(follow cf.cf_type);
+			cf2.cf_expr <- (match cf.cf_expr with
+				| None -> error "Recursive @:generic function" p
+				| Some e -> Some (Codegen.generic_substitute_expr gctx e));
+			cf2.cf_kind <- cf.cf_kind;
+			cf2.cf_public <- cf.cf_public;
+			let metadata = List.filter (fun (m,_,_) -> match m with
+				| Meta.Generic -> false
+				| _ -> true
+			) cf.cf_meta in
+			cf2.cf_meta <- (Meta.NoCompletion,[],p) :: (Meta.NoUsing,[],p) :: (Meta.GenericInstance,[],p) :: metadata;
+			cf2
+		in
+		let e = if stat then type_type ctx c.cl_path p else e in
+		let fa = if stat then FStatic (c,cf2) else FInstance (c,tl,cf2) in
+		let e = mk (TField(e,fa)) cf2.cf_type p in
+		make_call ctx e el ret p
+	with Codegen.Generic_Exception (msg,p) ->
+		error msg p)
+
 let call_to_string ctx c e =
 	let et = type_module_type ctx (TClassDecl c) None e.epos in
 	let cf = PMap.find "toString" c.cl_statics in
@@ -2760,17 +2843,23 @@ and type_access ctx e p mode =
 	| _ ->
 		AKExpr (type_expr ctx (e,p) Value)
 
+and force_generic ctx p = function
+	| TInst({cl_kind = KGeneric } as c,tl) -> follow (Codegen.build_generic ctx c p tl)
+	| t -> t
+
 and type_vars ctx vl p in_block =
 	let save = if in_block then (fun() -> ()) else save_locals ctx in
 	let vl = List.map (fun (v,t,e,m) ->
 		try
 			let t = Typeload.load_type_opt ctx p t in
-			let e = (match e with
-				| None -> None
+			let t, e = (match e with
+				| None -> t, None
 				| Some e ->
 					let e = type_expr ctx e (WithType t) in
+					let t1 = force_generic ctx p e.etype in
+					let e, t = if t1 != e.etype then {e with etype=t1}, t1 else e, t in
 					let e = Codegen.AbstractCast.cast_or_unify ctx t e p in
-					Some e
+					t, Some e
 			) in
 			if v.[0] = '$' && ctx.com.display = DMNone then error "Variables names starting with a dollar are not allowed" p;
 			add_local ~meta:m ctx v t, e
@@ -5102,8 +5191,6 @@ let rec create com =
 		| [TClassDecl c2 ] -> ctx.g.global_using <- c1 :: c2 :: ctx.g.global_using
 		| _ -> assert false);
 	| _ -> assert false);
-	let m = Typeload.load_module ctx ([],"Tuple") null_pos in
-	ctx.m.module_types <- m.m_types @ ctx.m.module_types;
 	ctx
 
 ;;
@@ -5113,4 +5200,5 @@ get_constructor_ref := get_constructor;
 cast_or_unify_ref := Codegen.AbstractCast.cast_or_unify_raise;
 type_module_type_ref := type_module_type;
 find_array_access_raise_ref := Codegen.AbstractCast.find_array_access_raise;
-build_call_ref := build_call
+build_call_ref := build_call;
+type_generic_function_ref := type_generic_function2
