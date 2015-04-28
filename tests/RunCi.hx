@@ -356,7 +356,12 @@ class RunCi {
 			changeDirectory(getHaxelibPath("hxcpp") + "tools/hxcpp/");
 			runCommand("haxe", ["compile.hxml"]);
 			changeDirectory(getHaxelibPath("hxcpp") + "project/");
-			runCommand("neko", ["build.n"]);
+			switch (ci) {
+				case AppVeyor:
+					runCommand("neko", ["build.n", "windows-m32"]);
+				case _:
+					runCommand("neko", ["build.n"]);
+			}
 			changeDirectory(oldDir);
 		}
 
@@ -509,6 +514,7 @@ class RunCi {
 					runCommand("haxe", ["compile-macro.hxml"]);
 
 					changeDirectory(miscDir);
+					getCsDependencies();
 					runCommand("haxe", ["compile.hxml"]);
 
 					switch (ci) {
@@ -542,14 +548,14 @@ class RunCi {
 							//pass
 						case TravisCI:
 							changeDirectory(repoDir);
-							runCommand("make", ["BYTECODE=1", "OCAMLOPT=ocamlopt.opt", "-s"]);
+							runCommand("make", ["BYTECODE=1", "-s"]);
 							runCommand("sudo", ["make", "install", "-s"]);
 							changeDirectory(unitDir);
 							runCommand("haxe", ["compile-macro.hxml"]);
 						case AppVeyor:
 							// save time...
 							// changeDirectory(repoDir);
-							// runCommand(Sys.getEnv("CYG_ROOT") + "/bin/bash", ["-lc", 'cd \"$$OLDPWD\" && make -s -f Makefile.win WODI=wodi${Sys.getEnv("WODI_ARCH")} OCAMLC=ocamlc.opt BYTECODE=1']);
+							// runCommand(Sys.getEnv("CYG_ROOT") + "/bin/bash", ["-lc", 'cd \"$$OLDPWD\" && make -s -f Makefile.win BYTECODE=1']);
 							// changeDirectory(unitDir);
 							// runCommand("haxe", ["compile-macro.hxml"]);
 					}
@@ -595,7 +601,7 @@ class RunCi {
 					}
 				case Cpp:
 					getCppDependencies();
-					runCommand("haxe", ["compile-cpp.hxml"]);
+					runCommand("haxe", ["compile-cpp.hxml", "-D", "HXCPP_M32"]);
 					runCpp("bin/cpp/Test-debug", []);
 
 					switch (ci) {

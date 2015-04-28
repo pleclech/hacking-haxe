@@ -321,7 +321,6 @@ let keyword_remap name =
    | "_Complex" | "INFINITY" | "NAN"
    | "INT_MIN" | "INT_MAX" | "INT8_MIN" | "INT8_MAX" | "UINT8_MAX" | "INT16_MIN"
    | "INT16_MAX" | "UINT16_MAX" | "INT32_MIN" | "INT32_MAX" | "UINT32_MAX"
-   | "DELETE"
    | "struct" -> "_" ^ name
    | "asm" -> "_asm_"
    | x -> x
@@ -397,6 +396,9 @@ match field_access with
    | _ -> ""
 ;;
 
+let format_code code =
+	String.concat "\n" (ExtString.String.nsplit code "\r\n")
+
 let get_code meta key =
    let code = get_meta_string meta key in
    let magic_var = "${GENCPP_SOURCE_DIRECTORY}"  in
@@ -407,7 +409,7 @@ let get_code meta key =
       end else
          code
       in
-   if (code<>"") then String.concat "\n" (ExtString.String.nsplit code "\r\n") ^ "\n" else code
+   if (code<>"") then format_code code ^ "\n" else code
 ;;
 
 let has_meta_key meta key =
@@ -610,7 +612,8 @@ let rec class_string klass suffix params remap =
    let join_class_path_remap = if remap then join_class_path_remap else join_class_path in
    (match klass.cl_path with
    (* Array class *)
-   |  ([],"Array") when is_dynamic_array_param (List.hd params) -> "Dynamic"
+   |  ([],"Array") when is_dynamic_array_param (List.hd params) ->
+           "cpp::ArrayBase" ^ suffix (* "Dynamic" *)
    |  ([],"Array") -> (snd klass.cl_path) ^ suffix ^ "< " ^ (String.concat ","
                (List.map array_element_type params) ) ^ " >"
    (* FastIterator class *)
@@ -1284,7 +1287,7 @@ let find_undeclared_variables_ctx ctx undeclared declarations this_suffix allow_
 let rec is_dynamic_in_cpp ctx expr =
    let expr_type = type_string ( match follow expr.etype with TFun (args,ret) -> ret | _ -> expr.etype) in
    ctx.ctx_dbgout ( "/* idic: " ^ expr_type ^ " */" );
-   if ( expr_type="Dynamic" ) then
+   if ( expr_type="Dynamic" || expr_type="cpp::ArrayBase") then
       true
    else begin
       let result = (
@@ -1362,18 +1365,18 @@ and is_dynamic_member_return_in_cpp ctx field_object field =
    | TTypeExpr t ->
          let full_name = "::" ^ (join_class_path (t_path t) "::" ) ^ "." ^ member in
          ctx.ctx_dbgout ("/*static:"^ full_name^"*/");
-         ( try ( let mem_type = (Hashtbl.find ctx.ctx_class_member_types full_name) in mem_type="Dynamic" )
+         ( try ( let mem_type = (Hashtbl.find ctx.ctx_class_member_types full_name) in mem_type="Dynamic"||mem_type="cpp::ArrayBase" )
          with Not_found -> true )
    | _ ->
       let tstr = type_string field_object.etype in
       (match tstr with
          (* Internal classes have no dynamic members *)
          | "::String" | "Null" | "::hx::Class" | "::Enum" | "::Math" | "::ArrayAccess" -> false
-         | "Dynamic" -> ctx.ctx_dbgout "/*D*/"; true
+         | "Dynamic" | "cpp::ArrayBase" -> ctx.ctx_dbgout "/*D*/"; true
          | name ->
                let full_name = name ^ "." ^ member in
                ctx.ctx_dbgout ("/*R:"^full_name^"*/");
-               try ( let mem_type = (Hashtbl.find ctx.ctx_class_member_types full_name) in mem_type="Dynamic" )
+               try ( let mem_type = (Hashtbl.find ctx.ctx_class_member_types full_name) in mem_type="Dynamic"||mem_type="cpp::ArrayBase" )
                with Not_found -> true )
 ;;
 
@@ -1881,7 +1884,7 @@ and gen_expression ctx retval expression =
       | x when is_interface_type x -> ()
       | TInst (klass,[element]) ->
          let name = type_string element in
-         if ( is_object name ) then
+         if ( is_object name && not (is_interface_type element) ) then
             gen_array_cast ".StaticCast" "Array<Dynamic>" "()"
          else
             gen_array_cast ".StaticCast" (type_string array_type) "()"
@@ -1934,6 +1937,13 @@ and gen_expression ctx retval expression =
                output ( "." ^ remap_name )
             else begin
                cast_if_required ctx field_object (type_string field_object.etype);
+               let remap_name = if (type_string field_object.etype)="cpp::ArrayBase" then
+                   match remap_name with
+                   | "length" -> remap_name
+                   | _ -> "__" ^ remap_name
+               else
+                  remap_name
+               in
                output ( "->" ^ remap_name );
                if (calling && (is_array field_object.etype) && remap_name="iterator" ) then
                   check_array_element_cast field_object.etype "Fast" "";
@@ -1965,9 +1975,9 @@ and gen_expression ctx retval expression =
          | TLocal { v_name = "__cpp__" } -> true
          | _ -> false) ->
       ( match arg_list with
-      | [{ eexpr = TConst (TString code) }] -> output code;
+      | [{ eexpr = TConst (TString code) }] -> output (format_code code);
       | ({ eexpr = TConst (TString code) } as ecode) :: tl ->
-         Codegen.interpolate_code ctx.ctx_common code tl output (gen_expression ctx true) ecode.epos
+         Codegen.interpolate_code ctx.ctx_common (format_code code) tl output (gen_expression ctx true) ecode.epos
       | _ -> error "__cpp__'s first argument must be a string" func.epos;
       )
    | TCall (func, arg_list) when tcall_expand_args->
@@ -2001,7 +2011,7 @@ and gen_expression ctx retval expression =
             let signature = cpp_function_signature field.cf_type "" in
             let name = keyword_remap field.cf_name in
             let void_cast = has_meta_key field.cf_meta Meta.Void in
-            output ("::cpp::Function<" ^ signature ^">(");
+            output ("::cpp::Function< " ^ signature ^">(");
             if (void_cast) then output "hx::AnyCast(";
             output ("&::" ^(join_class_path klass.cl_path "::")^ "_obj::" ^ name );
             if (void_cast) then output ")";
@@ -2025,7 +2035,7 @@ and gen_expression ctx retval expression =
          let cpp_type = member_type ctx obj field.cf_name in
          (not (is_scalar cpp_type)) && (
             let fixed = (cpp_type<>"?") && (expr_type<>"Dynamic") && (cpp_type<>"Dynamic") &&
-               (cpp_type<>expr_type) && (expr_type<>"Void") in
+               (cpp_type<>expr_type) && (expr_type<>"Void") && (cpp_type<>"cpp::ArrayBase") in
             if (fixed && (ctx.ctx_debug_level>1) ) then begin
                output ("/* " ^ (cpp_type) ^ " != " ^ expr_type ^ " -> cast */");
             end;
@@ -2073,7 +2083,7 @@ and gen_expression ctx retval expression =
       end;
       if (cast_result) then output (")");
       if ( (is_variable func) && (not (is_cpp_function_member func) ) &&
-           (expr_type<>"Dynamic") && (not is_super) && (not is_block_call)) then
+           (expr_type<>"Dynamic" && expr_type<>"cpp::ArrayBase" ) && (not is_super) && (not is_block_call)) then
          ctx.ctx_output (".Cast< " ^ expr_type ^ " >()" );
 
       let rec cast_array_output func =
@@ -2155,7 +2165,7 @@ and gen_expression ctx retval expression =
    | TLocal v -> output (keyword_remap v.v_name);
    | TArray (array_expr,_) when (is_null array_expr) -> output "Dynamic()"
    | TArray (array_expr,index) ->
-      let dynamic =  is_dynamic_in_cpp ctx array_expr in
+      let dynamic =  is_dynamic_in_cpp ctx array_expr || (type_string array_expr.etype) = "cpp::ArrayBase" in
       if ( assigning && (not dynamic) ) then begin
          if (is_array_implementer array_expr.etype) then begin
             output "hx::__ArrayImplRef(";
@@ -4149,15 +4159,15 @@ let generate_class_files common_ctx member_types super_deps constructor_deps cla
       output_h ("\t\t//~" ^ class_name ^ "();\n\n");
       output_h ("\t\tHX_DO_RTTI_ALL;\n");
       if (has_get_member_field class_def) then
-         output_h ("Dynamic __Field(const ::String &inString, hx::PropertyAccess inCallProp);\n");
+         output_h ("\t\tDynamic __Field(const ::String &inString, hx::PropertyAccess inCallProp);\n");
       if (has_get_static_field class_def) then
-         output_h ("static bool __GetStatic(const ::String &inString, Dynamic &outValue, hx::PropertyAccess inCallProp);\n");
+         output_h ("\t\tstatic bool __GetStatic(const ::String &inString, Dynamic &outValue, hx::PropertyAccess inCallProp);\n");
       if (has_set_member_field class_def) then
-         output_h ("Dynamic __SetField(const ::String &inString,const Dynamic &inValue, hx::PropertyAccess inCallProp);\n");
+         output_h ("\t\tDynamic __SetField(const ::String &inString,const Dynamic &inValue, hx::PropertyAccess inCallProp);\n");
       if (has_set_static_field class_def) then
-         output_h ("static bool __SetStatic(const ::String &inString, Dynamic &ioValue, hx::PropertyAccess inCallProp);\n");
+         output_h ("\t\tstatic bool __SetStatic(const ::String &inString, Dynamic &ioValue, hx::PropertyAccess inCallProp);\n");
       if (has_get_fields class_def) then
-         output_h ("void __GetFields(Array< ::String> &outFields);\n");
+         output_h ("\t\tvoid __GetFields(Array< ::String> &outFields);\n");
 
       if (field_integer_dynamic) then output_h "\t\tDynamic __IField(int inFieldID);\n";
       if (field_integer_numeric) then output_h "\t\tdouble __INumField(int inFieldID);\n";
@@ -4979,7 +4989,7 @@ class script_writer common_ctx ctx filename asciiOut =
             | "::String"  -> ArrayData "String"
             | "int" | "Float" | "bool" | "String" | "unsigned char" ->
                ArrayData typeName
-            | "Dynamic" -> ArrayAny
+            | "cpp::ArrayBase" | "Dynamic" -> ArrayAny
             | _ when is_interface_type param -> ArrayInterface (this#typeId (script_type_string param))
             | _ -> ArrayObject
             )

@@ -96,7 +96,7 @@ let is_debug_run() =
 	try Sys.getenv "HAXEDEBUG" = "1" with _ -> false
 
 let s_version =
-	Printf.sprintf "%d.%d.%d" version_major version_minor version_revision
+	Printf.sprintf "%d.%d.%d%s" version_major version_minor version_revision (match Version.version_extra with None -> "" | Some v -> " " ^ v)
 
 let format msg p =
 	if p = Ast.null_pos then
@@ -661,7 +661,7 @@ let rec process_params create pl =
 				(* already connected : skip *)
 				loop acc l)
 		| "--run" :: cl :: args ->
-			let acc = (cl ^ ".main()") :: "--macro" :: acc in
+			let acc = cl :: "-main" :: "--interp" :: acc in
 			let ctx = create (!each_params @ (List.rev acc)) in
 			ctx.com.sys_args <- args;
 			init ctx;
@@ -979,8 +979,8 @@ and do_connect host port args =
 
 and init ctx =
 	let usage = Printf.sprintf
-		"Haxe Compiler %s %s- (C)2005-2015 Haxe Foundation\n Usage : haxe%s -main <class> [-swf|-js|-neko|-php|-cpp|-as3] <output> [options]\n Options :"
-		s_version (match Version.version_extra with None -> "" | Some v -> v) (if Sys.os_type = "Win32" then ".exe" else "")
+		"Haxe Compiler %s - (C)2005-2015 Haxe Foundation\n Usage : haxe%s -main <class> [-swf|-js|-neko|-php|-cpp|-as3] <output> [options]\n Options :"
+		s_version (if Sys.os_type = "Win32" then ".exe" else "")
 	in
 	let com = ctx.com in
 	let classes = ref [([],"Std")] in
@@ -1018,8 +1018,8 @@ try
 			| l ->
 				l
 		in
-		let parts = "" :: Str.split_delim (Str.regexp "[;:]") p in
-		com.class_path <- List.map normalize_path (loop parts)
+		let parts = Str.split_delim (Str.regexp "[;:]") p in
+		com.class_path <- "" :: List.map normalize_path (loop parts)
 	with
 		Not_found ->
 			if Sys.os_type = "Unix" then

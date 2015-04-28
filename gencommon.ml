@@ -2113,7 +2113,7 @@ struct
 				let init = List.fold_left (fun acc cf ->
 					match cf.cf_kind, should_handle_dynamic_functions with
 						| (Var v, _) when Meta.has Meta.ReadOnly cf.cf_meta && readonly_support ->
-								if v.v_write <> AccNever then gen.gcon.warning "@:readOnly variable declared without `never` setter modifier" cf.cf_pos;
+								if v.v_write <> AccNever && not (Meta.has Meta.CoreApi cl.cl_meta) then gen.gcon.warning "@:readOnly variable declared without `never` setter modifier" cf.cf_pos;
 								(match cf.cf_expr with
 									| None -> gen.gcon.warning "Uninitialized readonly variable" cf.cf_pos; acc
 									| Some e -> ensure_simple_expr gen e; acc)
@@ -2154,7 +2154,7 @@ struct
 					let vars, funs = List.fold_left (fun (acc_vars,acc_funs) cf ->
 						match cf.cf_kind with
 							| Var v when Meta.has Meta.ReadOnly cf.cf_meta && readonly_support ->
-									if v.v_write <> AccNever then gen.gcon.warning "@:readOnly variable declared without `never` setter modifier" cf.cf_pos;
+									if v.v_write <> AccNever && not (Meta.has Meta.CoreApi cl.cl_meta) then gen.gcon.warning "@:readOnly variable declared without `never` setter modifier" cf.cf_pos;
 									(match cf.cf_expr with
 										| None -> (acc_vars,acc_funs)
 										| Some e -> ensure_simple_expr gen e; (acc_vars,acc_funs))
@@ -2805,6 +2805,8 @@ struct
 									( (v,catch_map v (run catch)) :: nowrap_catches, must_wrap_catches, catchall )
 						) ([], [], None) catches
 						in
+						(* temp (?) fix for https://github.com/HaxeFoundation/haxe/issues/4134 *)
+						let must_wrap_catches = List.rev must_wrap_catches in
 						(*
 							1st catch all nowrap "the easy way"
 							2nd see if there are any must_wrap or catchall. If there is,
@@ -4815,13 +4817,12 @@ struct
 							let iface = mk_class cl.cl_module cl.cl_path cl.cl_pos in
 							iface.cl_array_access <- Option.map (apply_params (cl.cl_params) (List.map (fun _ -> t_dynamic) cl.cl_params)) cl.cl_array_access;
 							iface.cl_module <- cl.cl_module;
-							iface.cl_meta <- (Meta.HxGen, [], cl.cl_pos) :: iface.cl_meta;
-							if gen.gcon.platform = Cs then begin
-								let tparams = List.map (fun _ -> "object") cl.cl_params in
-								iface.cl_meta <- (Meta.Meta, [
-									EConst( String("haxe.lang.GenericInterface(typeof(" ^ path_s cl.cl_path ^ "<" ^ String.concat ", " tparams ^">))") ), cl.cl_pos
-								], cl.cl_pos) :: iface.cl_meta
-							end;
+							iface.cl_meta <-
+								(Meta.HxGen, [], cl.cl_pos)
+								::
+								(Meta.Custom "generic_iface", [(EConst(Int(string_of_int(List.length cl.cl_params))), cl.cl_pos)], cl.cl_pos)
+								::
+								iface.cl_meta;
 							Hashtbl.add ifaces cl.cl_path iface;
 
 							iface.cl_implements <- (base_generic, []) :: iface.cl_implements;
@@ -6568,6 +6569,20 @@ struct
 		 | _ -> e
 		in
 
+		let get_abstract_impl t = match t with
+			| TAbstract(a,pl) when not (Meta.has Meta.CoreType a.a_meta) ->
+				Abstract.get_underlying_type a pl
+			| t -> t
+		in
+
+		let rec is_abstract_to_struct t = match t with
+			| TAbstract(a,pl) when not (Meta.has Meta.CoreType a.a_meta) ->
+				is_abstract_to_struct (Abstract.get_underlying_type a pl)
+			| TInst(c,_) when Meta.has Meta.Struct c.cl_meta ->
+				true
+			| _ -> false
+		in
+
 		let rec run ?(just_type = false) e =
 			let handle = if not just_type then handle else fun e t1 t2 -> { e with etype = gen.greal_type t2 } in
 			let was_in_value = !in_value in
@@ -6753,14 +6768,20 @@ struct
 								{ enull with etype = gen.greal_type e.etype }
 							else
 								mk_cast (gen.greal_type e.etype) enull
+					| _ when is_abstract_to_struct expr.etype && type_iseq gen e.etype (get_abstract_impl expr.etype) ->
+						run { expr with etype = expr.etype }
 					| _ ->
-						let last_unsafe = gen.gon_unsafe_cast in
-						gen.gon_unsafe_cast <- (fun t t2 pos -> ());
-						let ret = handle (run expr) e.etype expr.etype in
-						gen.gon_unsafe_cast <- last_unsafe;
-						match ret.eexpr with
-							| TCast _ -> ret
-							| _ -> { e with eexpr = TCast(ret,md); etype = gen.greal_type e.etype }
+						match gen.greal_type e.etype, gen.greal_type expr.etype with
+							| (TInst(c,tl) as tinst1), TAbstract({ a_path = ["cs"],"Pointer" }, [tinst2]) when type_iseq gen tinst1 (gen.greal_type tinst2) ->
+								run expr
+							| _ ->
+								let last_unsafe = gen.gon_unsafe_cast in
+								gen.gon_unsafe_cast <- (fun t t2 pos -> ());
+								let ret = handle (run expr) e.etype expr.etype in
+								gen.gon_unsafe_cast <- last_unsafe;
+								match ret.eexpr with
+									| TCast _ -> { ret with etype = gen.greal_type e.etype }
+									| _ -> { e with eexpr = TCast(ret,md); etype = gen.greal_type e.etype }
 					)
 				(*| TCast _ ->
 					(* if there is already a cast, we should skip this cast check *)
