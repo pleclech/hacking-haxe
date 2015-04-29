@@ -1522,6 +1522,14 @@ and parse_type_path1 pack = parser
 						| [< '(Binop OpLt,_); l = psep Comma parse_type_path_or_const; '(Binop OpGt,_) >] -> l
 						| [< >] -> []
 					) in
+					let ln = (List.length params) in
+					let sub =
+						match name, sub with
+						| "Tuple", None when ln > 1 ->
+							Some(name^(string_of_int ln))
+						| _ ->
+							sub
+					in
 					name, params, sub
 			in mk_type pack name params sub
 	| [< '(Binop OpOr,_) when do_resume() >] ->
