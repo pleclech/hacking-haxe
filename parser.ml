@@ -2399,7 +2399,6 @@ and expr s =
 					expr_next e s
 				| [< t = parse_type_hint; '(PClose,p2); s >] -> 
 					let _=pop_flag() in
-					!warning(s_expr e) (pos e);
 					expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
 				| [< '(Comma, _); es=parse_tuple [e]; s >] -> 
 					(match s with parser

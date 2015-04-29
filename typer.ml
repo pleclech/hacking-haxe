@@ -264,26 +264,26 @@ let make_paths c cf =
 		!cur_paths
 
 let has_meta_access ?(partial=false) m c f path =
-	let path = List.rev path in
-	let b = EBreak in
-	let s_path e = match e with
-		| EField (e,f) -> f, fst e
-		| EConst (Ident n) -> n, b
-		| _ -> "", b
+	let s_path e =
+		let rec loop acc = function
+			| EField (e,f) -> loop (f::acc) (fst e)
+			| EConst (Ident n) -> n::acc
+			| _ -> acc
+		in loop [] e
 	in
 	let chk_path_m e path =
-		match s_path(fst e) with
-		| "", _ -> false
-		| _,_ as se ->
-			let rec loop e p =
-				match e, p with
-				| ("",_), _ -> partial
-				| (s, e), x::xs -> 
-					let r = x=s in
-						if (e=b) then r
-						else (loop (s_path e) xs)
-				| (_,_), [] -> false
-			in loop se path
+		match s_path (fst e) with
+		| [] -> false
+		| [s] when partial && path<>[] -> s=List.hd (List.rev path)
+		| mp ->
+			let rec loop mp p =
+				match mp, p with
+				| [], _ -> true
+				| x::xs, [] -> false
+				| s::ss, x::xs ->
+					if s=x then loop ss xs
+					else false
+			in loop mp path
 	in
 	let rec loop = function
 			| (m2,el,_) :: l when m = m2 ->
@@ -303,22 +303,13 @@ let rec can_access ctx ?(in_overload=false) c cf stat =
 	else
 	(* TODO: should we add a c == ctx.curclass short check here? *)
 	(* has metadata path *)
-	let cur_paths = ref [] in
-	let rec loop c =
-		cur_paths := make_path c ctx.curfield :: !cur_paths;
-		begin match c.cl_super with
-			| Some (csup,_) -> loop csup
-			| None -> ()
-		end;
-		List.iter (fun (c,_) -> loop c) c.cl_implements;
-	in
-	loop ctx.curclass;
+	let cur_paths = make_paths ctx.curclass ctx.curfield in
 	let is_constr = cf.cf_name = "new" in
 	let rec loop c =
 		(try
 			(* if our common ancestor declare/override the field, then we can access it *)
 			let f = if is_constr then (match c.cl_constructor with None -> raise Not_found | Some c -> c) else PMap.find cf.cf_name (if stat then c.cl_statics else c.cl_fields) in
-			is_parent c ctx.curclass || (List.exists (has_meta_access Meta.Allow c f) !cur_paths)
+			is_parent c ctx.curclass || (List.exists (has_meta_access Meta.Allow c f) cur_paths)
 		with Not_found ->
 			false
 		)
