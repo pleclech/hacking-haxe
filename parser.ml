@@ -1025,9 +1025,25 @@ let opt_ident s =
 let ident = parser
 	| [< '(Const (Ident i),p) >] -> i,p
 
+let ident_or_const s =
+	match Stream.npeek 2 s with
+	| [(Kwd KConst, _); (Const (Ident _), _)] -> ident s
+	| [(Kwd KConst, p); _] ->
+		Stream.junk s;
+		"const", p
+	| _ -> ident s
+
 let dollar_ident = parser
 	| [< '(Const (Ident i),p) >] -> i,p
 	| [< '(Dollar i,p) >] -> ("$" ^ i),p
+
+let dollar_ident_or_const s =
+	match Stream.npeek 2 s with
+	| [(Kwd KConst, _); (Const (Ident _), _)] -> dollar_ident s
+	| [(Kwd KConst, p); _] ->
+		Stream.junk s;
+		"const", p
+	| _ -> dollar_ident s
 
 let dollar_ident_macro pack = parser
 	| [< '(Const (Ident i),p) >] -> i,p
@@ -1838,10 +1854,16 @@ and parse_class_herit ?(cc={cc_param=None;cc_super_args=null_pos, None;}) = pars
 		else HExtends t
 	| [< '(Kwd Implements,_); t = parse_type_path >] -> HImplements t
 
-and block1 = parser
-	| [< name,p = dollar_ident; s >] -> block2 name (Ident name) p s
-	| [< '(Const (String name),p); s >] -> block2 (quote_ident name) (String name) p s
-	| [< b = block [] >] -> EBlock b
+and block1 s =
+	match Stream.npeek 2 s with
+	| [(Kwd KConst, p); (DblDot, _)] ->
+		Stream.junk s;
+		block2 "const" (Ident "const") p s
+	| _ ->
+		(match s with parser
+		| [< name,p = dollar_ident; s >] -> block2 name (Ident name) p s
+		| [< '(Const (String name),p); s >] -> block2 (quote_ident name) (String name) p s
+		| [< b = block [] >] -> EBlock b)
 
 and block2 name ident p s =
 	let default s =
@@ -1895,7 +1917,7 @@ and block acc s =
 			(!display_error) e p;
 			block acc s
 
-and parse_block_elt =
+and parse_block_elt s =
 	let parse_var_or_const is_const p1 s =
 		let hx s = 
 			match s with parser
@@ -1908,17 +1930,24 @@ and parse_block_elt =
 			| [< s >] -> hx s
 		end else hx s
 	in
-	parser
-	| [< '(Kwd KConst,p1); s >] -> parse_var_or_const true p1 s
-	| [< '(Kwd Var,p1); s >] -> parse_var_or_const false p1 s
-	| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e
-	| [< e = expr; _ = semicolon >] -> e
+	match Stream.npeek 2 s with
+	| [(Kwd KConst, p1); (BrOpen, _)] ->
+		Stream.junk s;
+		parse_var_or_const true p1 s
+	| [(Kwd KConst, p1); (Const(Ident _), _)] ->
+		Stream.junk s;
+		parse_var_or_const true p1 s
+	| _ ->
+		(match s with parser
+		| [< '(Kwd Var,p1); s >] -> parse_var_or_const false p1 s
+		| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e
+		| [< e = expr; _ = semicolon >] -> e)
 
 and parse_obj_decl = parser
 	| [< '(Comma,_); s >] ->
 		if !use_extended_syntax then
 			(match s with parser
-			| [< name, p = ident; s >] ->
+			| [< name, p = ident_or_const; s >] ->
 				(match Stream.peek s with
 				| Some (Comma, _) -> (name, mk_ident name p) :: (parse_obj_decl s)
 				| Some (BrClose, _) -> [name, mk_ident name p]
@@ -1930,7 +1959,7 @@ and parse_obj_decl = parser
 			| [< >] -> [])
 		else
 			(match s with parser
-			| [< name, _ = ident; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
+			| [< name, _ = ident_or_const; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
 			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
 			| [< >] -> [])
 	| [< >] -> []
@@ -2343,7 +2372,7 @@ and expr s =
 			 | _ -> ())
 		| None -> ());
 
-	match s with parser
+	let hx s = match s with parser
 	| [< (name,params,p) = parse_meta_entry; s >] ->
 		(try
 			make_meta name params (secure_expr s) p
@@ -2356,7 +2385,7 @@ and expr s =
 		| _ -> e)
 	| [< '(Kwd Macro,p); s >] -> parse_macro_expr p s
 	| [< '(Kwd Var,p1); v = parse_var_decl >] -> EVars [v], p1
-	| [< '(Const c,p); s >] ->  expr_next (use_def_expr (EConst c,p)) s
+	| [< '(Const c,p); s >] -> expr_next (use_def_expr (EConst c,p)) s
 	| [< '(Kwd This,p); s >] -> use_def_expr (expr_next (mk_this p) s)
 	| [< '(Kwd True,p); s >] -> expr_next (EConst (Ident "true"),p) s
 	| [< '(Kwd False,p); s >] -> expr_next (EConst (Ident "false"),p) s
@@ -2508,6 +2537,16 @@ and expr s =
 	| [< '(IntInterval i,p1); e2 = expr >] -> make_binop OpInterval (EConst (Int i),p1) e2
 	| [< '(Kwd Untyped,p1); e = expr; s>] -> (EUntyped e,punion p1 (pos e))
 	| [< '(Dollar v,p); s >] -> expr_next (EConst (Ident ("$"^v)),p) s
+	in
+	match Stream.npeek 2 s with
+	| [(Kwd KConst, p); (t, _)] ->
+		(match t with
+		| Const (Ident _) ->
+			hx s
+		| _ ->
+			Stream.junk s;
+			use_def_expr (expr_next (mk_ident "const" p) s))
+	| _ -> hx s
 
 and sl_id = ("$@sl",None,None,[])
 
@@ -2521,6 +2560,7 @@ and expr_next e1 = parser
 		(match s with parser
 		| [< '(Kwd Macro,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"macro") , punion (pos e1) p2) s
 		| [< '(Kwd New,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"new") , punion (pos e1) p2) s
+		| [< '(Kwd KConst,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"const") , punion (pos e1) p2) s
 		| [< '(Const (Ident f),p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,f) , punion (pos e1) p2) s
 		| [< '(Dollar v,p2); s >] -> expr_next (EField (e1,"$"^v) , punion (pos e1) p2) s
 		| [< '(Binop OpOr,p2) when do_resume() >] ->
@@ -2611,9 +2651,10 @@ and expr_next e1 = parser
 	| [< '(Kwd In,_); e2 = expr >] ->
 		(EIn (e1,e2), punion (pos e1) (pos e2))
 	| [< s >] ->
+		let tok = Stream.peek s in
 		if !use_extended_syntax && not (is_flag_set noDbldotFlag) then
 			let pis = ref !Lexer.prev_is_space in
-			match Stream.peek s with
+			match tok with
 			| Some((Semicolon ,_)) | Some((Comma, _))| Some((BkClose, _)) -> e1
 			| Some((tok, _)) ->
 				let e1_args =
