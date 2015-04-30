@@ -1027,16 +1027,32 @@ let opt_ident s =
 		if (String.get s 0)='?' then true, String.sub s 1 (l-1)
 		else  false, s
 
-let ident = parser
-	| [< '(Const (Ident i),p) >] -> i,p
+let allow_kwd_or_else allow_kwd fn s =
+	if allow_kwd then
+		match s with parser
+			| [< '(Kwd KConst, p) >] -> "const", p
+			| [< '(Kwd Def, p) >] -> "def", p
+			| [< i,p = fn >] -> i,p
+	else
+		match s with parser
+			| [< i,p = fn >] -> i,p
+
+let ident ?(allow_kwd=false) s =
+	let hx s = match s with parser
+		| [< '(Const (Ident i),p) >] -> i,p
+	in
+	allow_kwd_or_else allow_kwd hx s
+
 
 let ident_or_const s =
 	match Stream.npeek 2 s with
 	| [(Kwd KConst, _); (Const (Ident _), _)] -> ident s
+	| [(Kwd KConst, _); (Kwd _, _)] -> ident s
 	| [(Kwd KConst, p); _] ->
 		Stream.junk s;
 		"const", p
 	| [(Kwd Def, _); (Const (Ident _), _)] -> ident s
+	| [(Kwd Def, _); (Kwd _, _)] -> ident s
 	| [(Kwd Def, p); _] ->
 		Stream.junk s;
 		"def", p
@@ -1047,13 +1063,7 @@ let dollar_ident ?(allow_kwd=false) s =
 	| [< '(Const (Ident i),p) >] -> i,p
 	| [< '(Dollar i,p) >] -> ("$" ^ i),p
 	in
-	if allow_kwd then
-		match s with parser
-		| [< '(Kwd KConst, p) >] -> "const", p
-		| [< '(Kwd Def, p) >] -> "def", p
-		| [< s >] -> hx s
-	else hx s
-
+	allow_kwd_or_else allow_kwd hx s
 
 let dollar_ident_or_const ?(allow_kwd=false) s =
 	if allow_kwd then
@@ -1638,8 +1648,8 @@ and parse_enum s =
 		}
 
 and parse_enum_param = parser
-	| [< '(Question,_); name, _ = ident; t = parse_type_hint >] -> (name,true,t)
-	| [< name, _ = ident; t = parse_type_hint >] -> (name,false,t)
+	| [< '(Question,_); name, _ = ident ~allow_kwd:true; t = parse_type_hint >] -> (name,true,t)
+	| [< name, _ = ident ~allow_kwd:true; t = parse_type_hint >] -> (name,false,t)
 
 and push_flag_with_parser f = parser
 	| [< >] -> push_flag f
@@ -2102,7 +2112,7 @@ and parse_tuple acc = parser
 	| [< >] -> acc
 
 and parse_var_decl_head ?(const=false) = parser
-	| [< meta = parse_meta; name, p = dollar_ident_or_const ~allow_kwd:true; t = parse_type_opt >] ->
+	| [< meta = parse_meta; name, p = dollar_ident ~allow_kwd:true; t = parse_type_opt >] ->
 		let meta = if const then (Meta.Const,[],p)::meta else meta in
 		(name,t,meta)
 
