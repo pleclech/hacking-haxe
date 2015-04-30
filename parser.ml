@@ -159,6 +159,9 @@ let rec make_meta name params ((v,p2) as e) p1 =
 (* vv extended syntax vv *)
 let use_extended_syntax = ref false
 
+let out_of_order_exprs:expr list ref = ref []
+let out_of_order_cfs:class_field list ref = ref []
+
 let for_ctx = ref []
 
 let push_for_ctx a = for_ctx := a :: !for_ctx
@@ -377,6 +380,8 @@ let mk_this_assign fn pfn =
 	make_binop OpAssign e_this (mk_ident fn pfn)
 
 let mk_call fn fa pfn =	ECall (mk_ident fn pfn, fa), pfn
+
+let mk_int i p = EConst (Int i), p
 
 let parse_cc_opt_access = parser
 	| [< '(Kwd Private, _) >] -> [APrivate]
@@ -1663,7 +1668,20 @@ and parse_var_or_const = parser
 	| [< '(Kwd Var,p1) >] -> p1, false
 	| [< '(Kwd KConst,p1) >] -> p1, true
 
+and parse_opt_fun_args s =
+	match Stream.peek s with
+		| Some(Binop OpLt, _)  | Some(POpen, _) ->
+			(match s with parser
+			| [< pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_) >] ->
+				Some (pl, al))
+		| _ -> None
+
 and parse_class_field s =
+	match !out_of_order_cfs with
+	| x :: xs ->
+		out_of_order_cfs := xs;
+		x
+	| [] ->
 	let doc = get_doc s in
 	let setla s = push_flag hasLocalAccessFlag in
 	let clearla s = push_not_flag hasLocalAccessFlag in
@@ -1725,6 +1743,62 @@ and parse_class_field s =
 					else FVar(t, e), meta, None
 				in
 				name, punion p1 p2, k, meta, oal)
+		| [< '(Kwd Def,p1); name = parse_fun_name; _ = add_cl_sym_def_with_parser name p1 (Some (SDFFunction name)) (Some {ccfd_access=al;ccfd_mutable=false;ccfd_meta=meta}); po = parse_opt_fun_args; t = parse_type_opt; s >] ->
+			let pl, args, name, ooe = match po with
+				| None ->
+					let t = Some(CTPath (mk_type_inf [])) in
+					let gname = "get_"^name in
+					let ooe =
+						if List.mem AOverride al then
+							[]
+						else
+							let k = FProp("get", "never", t, None) in
+							let cf = {cff_name = name; cff_doc = None; cff_meta = meta; cff_access = al; cff_pos = p1; cff_kind = k;} in
+							out_of_order_cfs := !out_of_order_cfs @ [cf];
+							let gto = mk_call "$getTypeOf" [mk_ident gname p1; mk_int "-1" p1] p1 in
+							[mk_call "$setTypeOf" [mk_ident name p1; gto] p1]
+					in
+					let gto = mk_call "$getTypeOf" [mk_ident gname p1; mk_int "-1" p1] p1 in
+					[], [], "get_"^name, ooe
+				| Some(pl, al) ->
+					pl, al, name, []
+			in
+			let e, p2 =
+				clearla s;
+				let testsemi = match ooe with
+				| [] -> true
+				| _ -> false
+				in
+				let r =
+					(match s with parser
+					| [< '(Binop OpAssign, p); e = toplevel_expr; s >] ->
+						if testsemi then (try ignore(semicolon s) with Error (Missing_semicolon,p) -> !display_error Missing_semicolon p);
+						let e = EReturn (Some e), punion p (pos e) in
+						Some e, pos e
+					| [< e = toplevel_expr; s >] ->
+						if testsemi then (try ignore(semicolon s) with Error (Missing_semicolon,p) -> !display_error Missing_semicolon p);
+						Some e, pos e
+					| [< '(Semicolon,p) >] -> None, p
+					| [< >] -> serror()
+					)
+				in
+				let _ = pop_flag() in
+				r
+			in
+			let args, e = match e with
+			| None -> args, e
+			| Some e ->
+				let args, e = adapt_fn_with_structure args e in
+				args, Some e
+			in
+			let f = {
+				f_params = pl;
+				f_args = args;
+				f_type = t;
+				f_expr = e;
+			} in
+			out_of_order_exprs := !out_of_order_exprs @ ooe;
+			name, punion p1 p2, FFun f, meta, None
 		| [< '(Kwd Function,p1); name = parse_fun_name; _ = add_cl_sym_def_with_parser name p1 (Some (SDFFunction name)) (Some {ccfd_access=al;ccfd_mutable=false;ccfd_meta=meta}); pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
 			let e, p2 =
 				clearla s;
@@ -2371,12 +2445,17 @@ and use_def_expr e =
 	end else e
 
 and expr s =
+	match !out_of_order_exprs with
+	| x::xs ->
+		out_of_order_exprs := xs;
+		x
+	| [] ->
 	if !use_extended_syntax && (is_flag_set discardPossibleClassFieldMemberFlag) then
 		(match Stream.peek s with
 		| Some (t, _) ->
 			(*print_string ((s_token t) ^"\n");*)
 			(match t with
-			 | At | Kwd Var | Kwd KConst | Kwd Public | Kwd Private | Kwd Inline | Kwd Static | Kwd Function -> raise BreakBlock
+			 | At | Kwd Var | Kwd KConst | Kwd Public | Kwd Override | Kwd Private | Kwd Inline | Kwd Static | Kwd Function | Kwd Def -> raise BreakBlock
 			 | _ -> ())
 		| None -> ());
 
