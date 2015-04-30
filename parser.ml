@@ -1603,7 +1603,7 @@ and parse_complex_type_next t = parser
 
 and parse_type_anonymous opt = parser
 	| [< '(Question,_) when not opt; s >] -> parse_type_anonymous true s
-	| [< name, p1 = ident; t = parse_type_hint; s >] ->
+	| [< name, p1 = ident ~allow_kwd:true; t = parse_type_hint; s >] ->
 		let next p2 acc =
 			{
 				cff_name = name;
@@ -1834,7 +1834,7 @@ and parse_class_field s =
 			} in
 			out_of_order_exprs := !out_of_order_exprs @ ooe;
 			name, punion p1 p2, FFun f, meta, None
-		| [< '(Kwd Function,p1); name = parse_fun_name; _ = add_cl_sym_def_with_parser name p1 (Some (SDFFunction name)) (Some {ccfd_access=al;ccfd_mutable=false;ccfd_meta=meta}); pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
+		| [< '(Kwd Function,p1); name = parse_fun_name ~allow_kwd:true; _ = add_cl_sym_def_with_parser name p1 (Some (SDFFunction name)) (Some {ccfd_access=al;ccfd_mutable=false;ccfd_meta=meta}); pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
 			let e, p2 =
 				clearla s;
 				let r =
@@ -1903,9 +1903,12 @@ and parse_cf_rights allow_static l = parser
 	| [< '(Kwd Inline,_); l = parse_cf_rights allow_static (AInline :: l) >] -> l
 	| [< >] -> l
 
-and parse_fun_name = parser
-	| [< name,_ = dollar_ident >] -> name
-	| [< '(Kwd New,_) >] -> "new"
+and parse_fun_name ?(allow_kwd=false) s = 
+	let hx s = match s with parser
+		| [< name, p = dollar_ident >] -> name, p
+		| [< '(Kwd New, p) >] -> "new", p
+	in
+	fst (allow_kwd_or_else allow_kwd hx s)
 
 and parse_fun_param s =
 	let hx s = match s with parser
