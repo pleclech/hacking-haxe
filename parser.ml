@@ -396,6 +396,7 @@ let parse_cc_param_opt_access = parser
 let parse_cc_param_opt_modifier = parser
 	| [< '(Kwd Var, _) >] -> NormalField, true
 	| [< '(Kwd KConst, _) >] -> NormalField, false
+	| [< '(Kwd Val, _) >] -> NormalField, false
 	| [< >] -> LocalField, false
 
 let get_opt_name = function
@@ -1032,6 +1033,7 @@ let allow_kwd_or_else allow_kwd fn s =
 		match s with parser
 			| [< '(Kwd KConst, p) >] -> "const", p
 			| [< '(Kwd Def, p) >] -> "def", p
+			| [< '(Kwd Val, p) >] -> "val", p
 			| [< i,p = fn >] -> i,p
 	else
 		match s with parser
@@ -1046,13 +1048,16 @@ let ident ?(allow_kwd=false) s =
 
 let ident_or_const s =
 	match Stream.npeek 2 s with
-	| [(Kwd KConst, _); (Const (Ident _), _)] -> ident s
-	| [(Kwd KConst, _); (Kwd _, _)] -> ident s
+	| [(Kwd KConst, _); (Const (Ident _), _)] -> ident s | [(Kwd KConst, _); (Kwd _, _)]
+	| [(Kwd Val, _); (Const (Ident _), _)] -> ident s | [(Kwd Val, _); (Kwd _, _)]
+	| [(Kwd Def, _); (Const (Ident _), _)] -> ident s | [(Kwd Def, _); (Kwd _, _)]
+		-> ident s
 	| [(Kwd KConst, p); _] ->
 		Stream.junk s;
 		"const", p
-	| [(Kwd Def, _); (Const (Ident _), _)] -> ident s
-	| [(Kwd Def, _); (Kwd _, _)] -> ident s
+	| [(Kwd Val, p); _] ->
+		Stream.junk s;
+		"val", p
 	| [(Kwd Def, p); _] ->
 		Stream.junk s;
 		"def", p
@@ -1070,17 +1075,16 @@ let dollar_ident_or_const ?(allow_kwd=false) s =
 		dollar_ident ~allow_kwd:allow_kwd s
 	else
 		match Stream.npeek 2 s with
-		| [(Kwd KConst, _); (Const (Ident _), _)] ->
-			dollar_ident s
-		| [(Kwd KConst, _); (Kwd _, _)] ->
-			dollar_ident s
+		| [(Kwd KConst, _); (Const (Ident _), _)] | [(Kwd KConst, _); (Kwd _, _)]
+		| [(Kwd Val, _); (Const (Ident _), _)] | [(Kwd Val, _); (Kwd _, _)]
+		| [(Kwd Def, _); (Const (Ident _), _)] | [(Kwd Def, _); (Kwd _, _)]
+			-> dollar_ident s
 		| [(Kwd KConst, p); _] ->
 			Stream.junk s;
 			"const", p
-		| [(Kwd Def, _); (Const (Ident _), _)] ->
-			dollar_ident s
-		| [(Kwd Def, _); (Kwd  _, _)] ->
-			dollar_ident s
+		| [(Kwd Val, p); _] ->
+			Stream.junk s;
+			"val", p
 		| [(Kwd Def, p); _] ->
 			Stream.junk s;
 			"def", p
@@ -1435,7 +1439,7 @@ and parse_class_field_resume tdecl s =
 			| Kwd New :: Kwd Function :: _ ->
 				junk_tokens (k - 2);
 				parse_class_field_resume tdecl s
-			| Kwd Macro :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd KConst :: _| Kwd Def :: _ | Kwd Override :: _ | Kwd Dynamic :: _ | Kwd Inline :: _ ->
+			| Kwd Macro :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd Val :: _ | Kwd KConst :: _| Kwd Def :: _ | Kwd Override :: _ | Kwd Dynamic :: _ | Kwd Inline :: _ ->
 				junk_tokens (k - 1);
 				parse_class_field_resume tdecl s
 			| BrClose :: _ when tdecl ->
@@ -1510,19 +1514,33 @@ and parse_complex_type s =
 and parse_structural_extension = parser
 	| [< '(Binop OpGt,_); t = parse_type_path; '(Comma,_); s >] ->
 		t
+and maybe_classfield_decl s =
+	match Stream.npeek 2 s with
+	| [(Kwd KConst, p); (Kwd _, _)]
+	| [(Kwd KConst, p); (Const(Ident _), _)]
+	| [(Kwd Val, p); (Kwd _, _)]
+	| [(Kwd Val, p); (Const(Ident _), _)]
+	| [(Kwd Def, p); (Kwd _, _)]
+	| [(Kwd Def, p); (Const(Ident _), _)]
+		-> true
+	| _ -> false
 
 and parse_complex_type_inner = parser
 	| [< '(POpen,_); t = parse_complex_type; '(PClose,_) >] -> CTParent t
 	| [< '(BrOpen,p1); s >] ->
-		(match s with parser
-		| [< l = parse_type_anonymous false >] -> CTAnonymous l
-		| [< t = parse_structural_extension; s>] ->
-			let tl = t :: plist parse_structural_extension s in
+		if !use_extended_syntax && maybe_classfield_decl s then
+			match s with parser
+				| [< l, _ = parse_class_fields true p1 >] -> CTAnonymous l
+		else
 			(match s with parser
-			| [< l = parse_type_anonymous false >] -> CTExtend (tl,l)
-			| [< l, _ = parse_class_fields true p1 >] -> CTExtend (tl,l))
-		| [< l, _ = parse_class_fields true p1 >] -> CTAnonymous l
-		| [< >] -> serror())
+			| [< l = parse_type_anonymous false >] -> CTAnonymous l
+			| [< t = parse_structural_extension; s>] ->
+				let tl = t :: plist parse_structural_extension s in
+				(match s with parser
+				| [< l = parse_type_anonymous false >] -> CTExtend (tl,l)
+				| [< l, _ = parse_class_fields true p1 >] -> CTExtend (tl,l))
+			| [< l, _ = parse_class_fields true p1 >] -> CTAnonymous l
+			| [< >] -> serror())
 	| [< '(Question,_); t = parse_complex_type_inner >] ->
 		CTOptional t
 	| [< t = parse_type_path >] ->
@@ -1703,6 +1721,7 @@ and add_cl_sym_def_with_parser name pos is_ns fd = parser
 and parse_var_or_const = parser
 	| [< '(Kwd Var,p1) >] -> p1, false
 	| [< '(Kwd KConst,p1) >] -> p1, true
+	| [< '(Kwd Val,p1) >] -> p1, true
 
 and parse_opt_fun_args s =
 	match Stream.peek s with
@@ -1979,6 +1998,9 @@ and block1 s =
 	| [(Kwd KConst, p); (DblDot, _)] ->
 		Stream.junk s;
 		block2 "const" (Ident "const") p s
+	| [(Kwd Val, p); (DblDot, _)] ->
+		Stream.junk s;
+		block2 "val" (Ident "val") p s
 	| [(Kwd Def, p); (DblDot, _)] ->
 		Stream.junk s;
 		block2 "def" (Ident "def") p s
@@ -2054,24 +2076,15 @@ and parse_block_elt s =
 		end else hx s
 	in
 	match Stream.npeek 2 s with
-	| [(Kwd KConst, p1); (BrOpen, _)] ->
-		Stream.junk s;
-		parse_var_or_const true p1 s
-	| [(Kwd KConst, p1); (Const(Ident _), _)] ->
-		Stream.junk s;
-		parse_var_or_const true p1 s
-	| [(Kwd KConst, p1); (Kwd _, _)] ->
-		Stream.junk s;
-		parse_var_or_const true p1 s
-	| [(Kwd Var, p1); (BrOpen, _)] ->
-		Stream.junk s;
-		parse_var_or_const false p1 s
-	| [(Kwd Var, p1); (Const(Ident _), _)] ->
-		Stream.junk s;
-		parse_var_or_const false p1 s
-	| [(Kwd Var, p1); (Kwd _, _)] ->
-		Stream.junk s;
-		parse_var_or_const false p1 s
+	| [(Kwd KConst, p1); (BrOpen, _)] | [(Kwd KConst, p1); (Const(Ident _), _)] | [(Kwd KConst, p1); (Kwd _, _)]
+	| [(Kwd Val, p1); (BrOpen, _)] | [(Kwd Val, p1); (Const(Ident _), _)] | [(Kwd Val, p1); (Kwd _, _)]
+		->
+			Stream.junk s;
+			parse_var_or_const true p1 s
+	| [(Kwd Var, p1); (BrOpen, _)] | [(Kwd Var, p1); (Const(Ident _), _)] | [(Kwd Var, p1); (Kwd _, _)]
+		->
+			Stream.junk s;
+			parse_var_or_const false p1 s
 	| _ ->
 		(match s with parser
 		| [< '(Kwd Var,p1); s >] -> parse_var_or_const false p1 s
@@ -2508,7 +2521,7 @@ and expr s =
 		| Some (t, _) ->
 			(*print_string ((s_token t) ^"\n");*)
 			(match t with
-			 | At | Kwd Var | Kwd KConst | Kwd Public | Kwd Override | Kwd Private | Kwd Inline | Kwd Static | Kwd Function | Kwd Def -> raise BreakBlock
+			 | At | Kwd Var | Kwd Val | Kwd KConst | Kwd Public | Kwd Override | Kwd Private | Kwd Inline | Kwd Static | Kwd Function | Kwd Def -> raise BreakBlock
 			 | _ -> ())
 		| None -> ());
 
@@ -2544,11 +2557,19 @@ and expr s =
 			| [< >] -> serror())
 		| [< e = secure_expr >] -> expr_next (ECast (e,None),punion p1 (pos e)) s)
 	| [< '(Kwd Throw,p); e = expr >] -> (EThrow e,p)
-	| [< '(Kwd New,p1); t = parse_type_path; '(POpen,p); s >] ->
-		if is_resuming p then display (EDisplayNew t,punion p1 p);
-		(match s with parser
-		| [< al = psep Comma expr; '(PClose,p2); s >] -> expr_next (ENew (t,al),punion p1 p2) s
-		| [< >] -> serror())
+	| [< '(Kwd New,p1); t = parse_type_path; s >] ->
+		let hx s = match s with parser
+			[< '(POpen,p); s >] ->
+				if is_resuming p then display (EDisplayNew t,punion p1 p);
+				(match s with parser
+				| [< al = psep Comma expr; '(PClose,p2); s >] -> expr_next (ENew (t,al),punion p1 p2) s
+				| [< >] -> serror())
+		in
+		if !use_extended_syntax then
+			match Stream.peek s with
+			| Some(POpen, _) -> hx s
+			| _ -> expr_next (ENew (t, []), p1) s
+		else hx s
 	| [< '(POpen,p1); s >] ->
 		let hx s = 
 			match s with parser
@@ -2686,6 +2707,13 @@ and expr s =
 		| _ ->
 			Stream.junk s;
 			use_def_expr (expr_next (mk_ident "const" p) s))
+	| [(Kwd Val, p); (t, _)] ->
+		(match t with
+		| Const (Ident _) ->
+			hx s
+		| _ ->
+			Stream.junk s;
+			use_def_expr (expr_next (mk_ident "val" p) s))
 	| [(Kwd Def, p); (t, _)] ->
 		(match t with
 		| Const (Ident _) ->
@@ -2708,6 +2736,7 @@ and expr_next e1 = parser
 		| [< '(Kwd Macro,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"macro") , punion (pos e1) p2) s
 		| [< '(Kwd New,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"new") , punion (pos e1) p2) s
 		| [< '(Kwd KConst,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"const") , punion (pos e1) p2) s
+		| [< '(Kwd Val,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"val") , punion (pos e1) p2) s
 		| [< '(Kwd Def,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"def") , punion (pos e1) p2) s
 		| [< '(Const (Ident f),p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,f) , punion (pos e1) p2) s
 		| [< '(Dollar v,p2); s >] -> expr_next (EField (e1,"$"^v) , punion (pos e1) p2) s
