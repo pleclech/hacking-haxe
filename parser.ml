@@ -512,10 +512,12 @@ let rec psep sep f = parser
 
 let ident = parser
 	| [< '(Const (Ident i),p) >] -> i,p
+	| [< s >] -> val_or_const s
 
 let dollar_ident = parser
 	| [< '(Const (Ident i),p) >] -> i,p
 	| [< '(Dollar i,p) >] -> ("$" ^ i),p
+	| [< s >] -> val_or_const s
 
 let dollar_ident_macro pack = parser
 	| [< '(Const (Ident i),p) >] -> i,p
@@ -760,7 +762,7 @@ and parse_class_field_resume tdecl s =
 			| Kwd New :: Kwd Function :: _ ->
 				junk_tokens (k - 2);
 				parse_class_field_resume tdecl s
-			| Kwd Macro :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd Override :: _ | Kwd Dynamic :: _ | Kwd Inline :: _ ->
+			| Kwd Macro :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd Val :: _ | Kwd KConst :: _ | Kwd Override :: _ | Kwd Dynamic :: _ | Kwd Inline :: _ ->
 				junk_tokens (k - 1);
 				parse_class_field_resume tdecl s
 			| BrClose :: _ when tdecl ->
@@ -802,10 +804,10 @@ and parse_meta_params pname s = match s with parser
 and parse_meta_entry = parser
 	[< '(At,_); name,p = meta_name; params = parse_meta_params p; s >] -> (name,params,p)
 
-and parse_meta = parser
-	| [< entry = parse_meta_entry; s >] ->
-		entry :: parse_meta s
-	| [< >] -> []
+and parse_meta ?(is_const=false) = parser
+		| [< entry = parse_meta_entry; s >] ->
+			entry :: parse_meta s
+		| [< >] -> if is_const then [mk_mconst null_pos] else []
 
 and meta_name = parser
 	| [< '(Const (Ident i),p) >] -> (Meta.Custom i), p
@@ -972,8 +974,13 @@ and parse_class_field s =
 	let doc = get_doc s in
 	match s with parser
 	| [< meta = parse_meta; al = parse_cf_rights true []; s >] ->
+		let meta, sp = add_parsed_const meta s in
+		let parse_var s = match sp with
+		| Some p -> p
+		| None -> match s with parser [< '(Kwd Var, p) >] -> p
+		in
 		let name, pos, k = (match s with parser
-		| [< '(Kwd Var,p1); name, _ = dollar_ident; s >] ->
+		| [< p1=parse_var; name, _ = dollar_ident; s >] ->
 			(match s with parser
 			| [< '(POpen,_); i1 = property_ident; '(Comma,_); i2 = property_ident; '(PClose,_) >] ->
 				let t = parse_type_opt s in
@@ -1033,6 +1040,7 @@ and parse_fun_name = parser
 
 and parse_fun_param = parser
 	| [< meta = parse_meta; s >] ->
+		let meta, sp = add_parsed_const meta s in
 		match s with parser
 			| [< '(Question,_); name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,true,t,c,meta)
 			| [< name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,false,t,c,meta)
@@ -1129,8 +1137,8 @@ and parse_array_decl = parser
 	| [< >] ->
 		[]
 
-and parse_var_decl_head = parser
-	| [< meta = parse_meta; name, _ = dollar_ident; t = parse_type_opt >] -> (name,t,meta)
+and parse_var_decl_head ?(is_const=false) = parser
+	| [< meta = parse_meta ~is_const:is_const; name, _ = dollar_ident; t = parse_type_opt >] -> (name,t,meta)
 
 and parse_var_assignment = parser
 	| [< '(Binop OpAssign,p1); s >] ->
@@ -1140,11 +1148,11 @@ and parse_var_assignment = parser
 		end
 	| [< >] -> None
 
-and parse_var_decls_next vl = parser
-	| [< '(Comma,p1); name,t,meta = parse_var_decl_head; s >] ->
+and parse_var_decls_next ?(is_const=false) vl = parser
+	| [< '(Comma,p1); name,t,meta = parse_var_decl_head ~is_const:is_const; s >] ->
 		begin try
 			let eo = parse_var_assignment s in
-			parse_var_decls_next ((name,t,eo,meta) :: vl) s
+			parse_var_decls_next ~is_const:is_const ((name,t,eo,meta) :: vl) s
 		with Display e ->
 			let v = (name,t,Some e,meta) in
 			let e = (EVars(List.rev (v :: vl)),punion p1 (pos e)) in
@@ -1153,14 +1161,14 @@ and parse_var_decls_next vl = parser
 	| [< >] ->
 		vl
 
-and parse_var_decls p1 = parser
-	| [< name,t,meta = parse_var_decl_head; s >] ->
+and parse_var_decls ?(is_const=false) p1 = parser
+	| [< name,t,meta = parse_var_decl_head ~is_const:is_const; s >] ->
 		let eo = parse_var_assignment s in
-		List.rev (parse_var_decls_next [name,t,eo,meta] s)
+		List.rev (parse_var_decls_next ~is_const:is_const [name,t,eo,meta] s)
 	| [< s >] -> error (Custom "Missing variable identifier") p1
 
-and parse_var_decl = parser
-	| [< name,t,meta = parse_var_decl_head; eo = parse_var_assignment >] -> (name,t,eo,meta)
+and parse_var_decl ?(is_const=false) = parser
+	| [< name,t,meta = parse_var_decl_head ~is_const:is_const; eo = parse_var_assignment >] -> (name,t,eo,meta)
 
 and inline_function = parser
 	| [< '(Kwd Inline,_); '(Kwd Function,p1) >] -> true, p1
@@ -1200,6 +1208,17 @@ and parse_function p1 inl = parser
 		with
 			Display e -> display (make e))
 
+and parse_const_expr s =
+	let sp = const_pos s in
+	match  sp with
+	| Some p ->
+		Stream.junk s;
+		EVars [parse_var_decl ~is_const:true s], p
+	| None ->
+		match s with parser
+		| [< '(Kwd Val, p); s >] -> expr_next (mk_eident "val" p) s
+		| [< '(Kwd KConst, p); s >] -> expr_next (mk_eident "const" p) s
+
 and expr = parser
 	| [< (name,params,p) = parse_meta_entry; s >] ->
 		(try
@@ -1214,6 +1233,7 @@ and expr = parser
 	| [< '(Kwd Macro,p); s >] ->
 		parse_macro_expr p s
 	| [< '(Kwd Var,p1); v = parse_var_decl >] -> (EVars [v],p1)
+	| [< e = parse_const_expr >] -> e
 	| [< '(Const c,p); s >] -> expr_next (EConst c,p) s
 	| [< '(Kwd This,p); s >] -> expr_next (EConst (Ident "this"),p) s
 	| [< '(Kwd True,p); s >] -> expr_next (EConst (Ident "true"),p) s
@@ -1305,6 +1325,8 @@ and expr_next e1 = parser
 		(match s with parser
 		| [< '(Kwd Macro,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"macro") , punion (pos e1) p2) s
 		| [< '(Kwd New,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"new") , punion (pos e1) p2) s
+		| [< '(Kwd Val,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"val") , punion (pos e1) p2) s
+		| [< '(Kwd KConst,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"const") , punion (pos e1) p2) s
 		| [< '(Const (Ident f),p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,f) , punion (pos e1) p2) s
 		| [< '(Dollar v,p2); s >] -> expr_next (EField (e1,"$"^v) , punion (pos e1) p2) s
 		| [< '(Binop OpOr,p2) when do_resume() >] ->
