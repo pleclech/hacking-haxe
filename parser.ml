@@ -258,7 +258,7 @@ let reify in_macro =
 				"name", to_string n p;
 				"opt", to_bool o p;
 				"type", to_opt to_ctype t p;
-				"meta", to_meta m p;
+				(*"meta", to_meta m p;*) (* break *)
 			] in
 			to_obj (match e with None -> fields | Some e -> fields @ ["value",to_expr e p]) p
 		in
@@ -376,7 +376,7 @@ let reify in_macro =
 					"name", to_string v p;
 					"type", to_opt to_ctype t p;
 					"expr", to_opt to_expr e p;
-					"meta", to_meta m p;
+					(* "meta", to_meta m p; *) (* find why it breaks *)
 				] in
 				to_obj fields p
 			) vl p]
