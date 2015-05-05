@@ -2,6 +2,8 @@ open Ast
 
 let use_extended_syntax = ref false
 
+let warning : (string -> pos -> unit) ref = ref (fun _ _ -> assert false)
+
 let mk_efield e n p = EField (e, n), p
 let mk_eblock b p = EBlock b, p
 let mk_eident n p = (EConst(Ident n), p)
@@ -41,6 +43,16 @@ let add_parsed_const meta s =
 		(mk_mconst p)::meta, sp
 	| None -> meta, sp
 
+let mk_type pack name params sub =
+	{
+		tpackage = List.rev pack;
+		tname = name;
+		tparams = params;
+		tsub = sub;
+	}
+
+let mk_type_inf pack =
+	mk_type pack "Dynamic" ([TPType(CTPath {tpackage=[];tname="_";tparams=[];tsub=None;})]) None
 
 
 
