@@ -1404,6 +1404,17 @@ let rec type_ident_raise ?(imported_enums=true) ctx i p mode =
 		type_field ctx e name p mode
 
 and type_field ?(resume=false) ctx e i p mode =
+	let se =
+		if i="__to_const__" && not ctx.untyped then
+			match e.eexpr with
+			| TLocal v ->
+				v.v_meta <- 
+				(Meta.Const, [], p) :: v.v_meta;
+				Some(AKExpr(mk (TBlock []) ctx.t.tvoid p))
+			| _ -> None
+		else
+			None
+	in
 	let no_field() =
 		if resume then raise Not_found;
 		let t = match follow e.etype with
@@ -1426,130 +1437,139 @@ and type_field ?(resume=false) ctx e i p mode =
 				display_error ctx ("Field " ^ i ^ " cannot be called directly because it has no expression") p;
 				expr()
 			| _ ->
-				let error() =
-					display_error ctx (string_error i (string_source t) (s_type (print_context()) t ^ " has no field " ^ i)) p;
-					expr()
-				in
-				if i="__to_const__" then
-					match e.eexpr with
-					| TLocal v ->
-						v.v_meta <- (Meta.Const, [], p) :: v.v_meta;
-						AKExpr(mk (TBlock []) ctx.t.tvoid p)
-					| _ -> error()
-				else
-					error()
+				display_error ctx (string_error i (string_source t) (s_type (print_context()) t ^ " has no field " ^ i)) p;
+				expr()
 		end
 		else
 			expr()
 	in
-	match follow e.etype with
-	| TInst (c,params) ->
-		let rec loop_dyn c params =
-			match c.cl_dynamic with
-			| Some t ->
-				let t = apply_params c.cl_params params t in
-				if (mode = MGet || mode = MCall) && PMap.mem "resolve" c.cl_fields then begin
-					let f = PMap.find "resolve" c.cl_fields in
-					begin match f.cf_kind with
-						| Method MethMacro -> display_error ctx "The macro accessor is not allowed for field resolve" f.cf_pos
-						| _ -> ()
-					end;
-					let texpect = tfun [ctx.t.tstring] t in
-					let tfield = apply_params c.cl_params params (monomorphs f.cf_params f.cf_type) in
-					(try Type.unify tfield texpect
-					with Unify_error l ->
-						display_error ctx "Field resolve has an invalid type" f.cf_pos;
-						display_error ctx (error_msg (Unify [Cannot_unify(tfield,texpect)])) f.cf_pos);
-					AKExpr (make_call ctx (mk (TField (e,FInstance (c,params,f))) tfield p) [Codegen.type_constant ctx.com (String i) p] t p)
-				end else
-					AKExpr (mk (TField (e,FDynamic i)) t p)
-			| None ->
-				match c.cl_super with
-				| None -> raise Not_found
-				| Some (c,params) -> loop_dyn c params
-		in
-		(try
-			let c2, t , f = class_field ctx c params i p in
-			if e.eexpr = TConst TSuper then (match mode,f.cf_kind with
-				| MGet,Var {v_read = AccCall }
-				| MSet,Var {v_write = AccCall }
-				| MCall,Var {v_read = AccCall } ->
-					()
-				| MCall, Var _ ->
-					display_error ctx "Cannot access superclass variable for calling: needs to be a proper method" p
-				| MCall, _ ->
-					()
-				| MGet,Var _
-				| MSet,Var _ when (match c2 with Some ({ cl_extern = true; cl_path = ("flash" :: _,_) }, _) -> true | _ -> false) ->
-					()
-				| _, Method _ ->
-					display_error ctx "Cannot create closure on super method" p
-				| _ ->
-					display_error ctx "Normal variables cannot be accessed with 'super', use 'this' instead" p);
-			if not (can_access ctx c f false) && not ctx.untyped then display_error ctx ("Cannot access private field " ^ i) p;
-			field_access ctx mode f (match c2 with None -> FAnon f | Some (c,tl) -> FInstance (c,tl,f)) (apply_params c.cl_params params t) e p
-		with Not_found -> try
-			using_field ctx mode e i p
-		with Not_found -> try
-			loop_dyn c params
-		with Not_found -> try
-			(* if we have an abstract constraint we have to check its static fields and recurse (issue #2343) *)
-			begin match c.cl_kind with
-				| KTypeParameter tl ->
-					let rec loop tl = match tl with
-						| t :: tl ->
-							begin match follow t with
-								| TAbstract({a_impl = Some c},tl) when PMap.mem i c.cl_statics ->
-									let e = mk_cast e t p in
-									type_field ctx e i p mode;
-								| _ ->
-									loop tl
-							end
-						| [] ->
-							raise Not_found
-					in
-					loop tl
-				| _ ->
-					raise Not_found
-			end
-		with Not_found ->
-			if PMap.mem i c.cl_statics then error ("Cannot access static field " ^ i ^ " from a class instance") p;
-			no_field())
-	| TDynamic t ->
-		(try
-			using_field ctx mode e i p
-		with Not_found ->
-			AKExpr (mk (TField (e,FDynamic i)) t p))
-	| TAnon a ->
-		(try
-			let f = PMap.find i a.a_fields in
-			if not f.cf_public && not ctx.untyped then begin
-				match !(a.a_status) with
-				| Closed | Extend _ -> () (* always allow anon private fields access *)
-				| Statics c when can_access ctx c f true -> ()
-				| _ -> display_error ctx ("Cannot access private field " ^ i) p
-			end;
-			let fmode, ft = (match !(a.a_status) with
-				| Statics c -> FStatic (c,f), field_type ctx c [] f p
-				| EnumStatics e -> FEnum (e,try PMap.find f.cf_name e.e_constrs with Not_found -> assert false), Type.field_type f
-				| _ ->
-					match f.cf_params with
-					| [] ->
-						FAnon f, Type.field_type f
-					| l ->
-						(* handle possible constraints *)
-						let monos = List.map (fun _ -> mk_mono()) l in
-						let t = apply_params f.cf_params monos f.cf_type in
-						add_constraint_checks ctx [] [] f monos p;
-						FAnon f, t
-			) in
-			field_access ctx mode f fmode ft e p
-		with Not_found ->
-			if is_closed a then try
+	match se with
+	| Some e -> e
+	| None ->
+		(match follow e.etype with
+		| TInst (c,params) ->
+			let rec loop_dyn c params =
+				match c.cl_dynamic with
+				| Some t ->
+					let t = apply_params c.cl_params params t in
+					if (mode = MGet || mode = MCall) && PMap.mem "resolve" c.cl_fields then begin
+						let f = PMap.find "resolve" c.cl_fields in
+						begin match f.cf_kind with
+							| Method MethMacro -> display_error ctx "The macro accessor is not allowed for field resolve" f.cf_pos
+							| _ -> ()
+						end;
+						let texpect = tfun [ctx.t.tstring] t in
+						let tfield = apply_params c.cl_params params (monomorphs f.cf_params f.cf_type) in
+						(try Type.unify tfield texpect
+						with Unify_error l ->
+							display_error ctx "Field resolve has an invalid type" f.cf_pos;
+							display_error ctx (error_msg (Unify [Cannot_unify(tfield,texpect)])) f.cf_pos);
+						AKExpr (make_call ctx (mk (TField (e,FInstance (c,params,f))) tfield p) [Codegen.type_constant ctx.com (String i) p] t p)
+					end else
+						AKExpr (mk (TField (e,FDynamic i)) t p)
+				| None ->
+					match c.cl_super with
+					| None -> raise Not_found
+					| Some (c,params) -> loop_dyn c params
+			in
+			(try
+				let c2, t , f = class_field ctx c params i p in
+				if e.eexpr = TConst TSuper then (match mode,f.cf_kind with
+					| MGet,Var {v_read = AccCall }
+					| MSet,Var {v_write = AccCall }
+					| MCall,Var {v_read = AccCall } ->
+						()
+					| MCall, Var _ ->
+						display_error ctx "Cannot access superclass variable for calling: needs to be a proper method" p
+					| MCall, _ ->
+						()
+					| MGet,Var _
+					| MSet,Var _ when (match c2 with Some ({ cl_extern = true; cl_path = ("flash" :: _,_) }, _) -> true | _ -> false) ->
+						()
+					| _, Method _ ->
+						display_error ctx "Cannot create closure on super method" p
+					| _ ->
+						display_error ctx "Normal variables cannot be accessed with 'super', use 'this' instead" p);
+				if not (can_access ctx c f false) && not ctx.untyped then display_error ctx ("Cannot access private field " ^ i) p;
+				field_access ctx mode f (match c2 with None -> FAnon f | Some (c,tl) -> FInstance (c,tl,f)) (apply_params c.cl_params params t) e p
+			with Not_found -> try
+				using_field ctx mode e i p
+			with Not_found -> try
+				loop_dyn c params
+			with Not_found -> try
+				(* if we have an abstract constraint we have to check its static fields and recurse (issue #2343) *)
+				begin match c.cl_kind with
+					| KTypeParameter tl ->
+						let rec loop tl = match tl with
+							| t :: tl ->
+								begin match follow t with
+									| TAbstract({a_impl = Some c},tl) when PMap.mem i c.cl_statics ->
+										let e = mk_cast e t p in
+										type_field ctx e i p mode;
+									| _ ->
+										loop tl
+								end
+							| [] ->
+								raise Not_found
+						in
+						loop tl
+					| _ ->
+						raise Not_found
+				end
+			with Not_found ->
+				if PMap.mem i c.cl_statics then error ("Cannot access static field " ^ i ^ " from a class instance") p;
+				no_field())
+		| TDynamic t ->
+			(try
 				using_field ctx mode e i p
 			with Not_found ->
-				no_field()
-			else
+				AKExpr (mk (TField (e,FDynamic i)) t p))
+		| TAnon a ->
+			(try
+				let f = PMap.find i a.a_fields in
+				if not f.cf_public && not ctx.untyped then begin
+					match !(a.a_status) with
+					| Closed | Extend _ -> () (* always allow anon private fields access *)
+					| Statics c when can_access ctx c f true -> ()
+					| _ -> display_error ctx ("Cannot access private field " ^ i) p
+				end;
+				let fmode, ft = (match !(a.a_status) with
+					| Statics c -> FStatic (c,f), field_type ctx c [] f p
+					| EnumStatics e -> FEnum (e,try PMap.find f.cf_name e.e_constrs with Not_found -> assert false), Type.field_type f
+					| _ ->
+						match f.cf_params with
+						| [] ->
+							FAnon f, Type.field_type f
+						| l ->
+							(* handle possible constraints *)
+							let monos = List.map (fun _ -> mk_mono()) l in
+							let t = apply_params f.cf_params monos f.cf_type in
+							add_constraint_checks ctx [] [] f monos p;
+							FAnon f, t
+				) in
+				field_access ctx mode f fmode ft e p
+			with Not_found ->
+				if is_closed a then try
+					using_field ctx mode e i p
+				with Not_found ->
+					no_field()
+				else
+				let f = {
+					cf_name = i;
+					cf_type = mk_mono();
+					cf_doc = None;
+					cf_meta = no_meta;
+					cf_public = true;
+					cf_pos = p;
+					cf_kind = Var { v_read = AccNormal; v_write = (match mode with MSet -> AccNormal | MGet | MCall -> AccNo) };
+					cf_expr = None;
+					cf_params = [];
+					cf_overloads = [];
+				} in
+				a.a_fields <- PMap.add i f a.a_fields;
+				field_access ctx mode f (FAnon f) (Type.field_type f) e p
+			)
+		| TMono r ->
 			let f = {
 				cf_name = i;
 				cf_type = mk_mono();
@@ -1562,107 +1582,91 @@ and type_field ?(resume=false) ctx e i p mode =
 				cf_params = [];
 				cf_overloads = [];
 			} in
-			a.a_fields <- PMap.add i f a.a_fields;
+			let x = ref Opened in
+			let t = TAnon { a_fields = PMap.add i f PMap.empty; a_status = x } in
+			ctx.opened <- x :: ctx.opened;
+			r := Some t;
 			field_access ctx mode f (FAnon f) (Type.field_type f) e p
-		)
-	| TMono r ->
-		let f = {
-			cf_name = i;
-			cf_type = mk_mono();
-			cf_doc = None;
-			cf_meta = no_meta;
-			cf_public = true;
-			cf_pos = p;
-			cf_kind = Var { v_read = AccNormal; v_write = (match mode with MSet -> AccNormal | MGet | MCall -> AccNo) };
-			cf_expr = None;
-			cf_params = [];
-			cf_overloads = [];
-		} in
-		let x = ref Opened in
-		let t = TAnon { a_fields = PMap.add i f PMap.empty; a_status = x } in
-		ctx.opened <- x :: ctx.opened;
-		r := Some t;
-		field_access ctx mode f (FAnon f) (Type.field_type f) e p
-	| TAbstract (a,pl) ->
-		let static_abstract_access_through_instance = ref false in
-		(try
-			let c = (match a.a_impl with None -> raise Not_found | Some c -> c) in
-			let f = PMap.find i c.cl_statics in
-			if not (can_access ctx c f true) && not ctx.untyped then display_error ctx ("Cannot access private field " ^ i) p;
-			let field_type f =
-				if not (Meta.has Meta.Impl f.cf_meta) then begin
-					static_abstract_access_through_instance := true;
-					raise Not_found;
-				end;
-				let t = field_type ctx c [] f p in
-				apply_params a.a_params pl t
-			in
-			let et = type_module_type ctx (TClassDecl c) None p in
-			let field_expr f t = mk (TField (et,FStatic (c,f))) t p in
-			(match mode, f.cf_kind with
-			| (MGet | MCall), Var {v_read = AccCall } ->
-				(* getter call *)
-				let f = PMap.find ("get_" ^ f.cf_name) c.cl_statics in
-				let t = field_type f in
-				let r = match follow t with TFun(_,r) -> r | _ -> raise Not_found in
-				let ef = field_expr f t in
-				AKExpr(make_call ctx ef [e] r p)
-			| MSet, Var {v_write = AccCall } ->
-				let f = PMap.find ("set_" ^ f.cf_name) c.cl_statics in
-				let t = field_type f in
-				let ef = field_expr f t in
-				AKUsing (ef,c,f,e)
-			| (MGet | MCall), Var {v_read = AccNever} ->
-				AKNo f.cf_name
-			| (MGet | MCall), _ ->
-				let rec loop cfl = match cfl with
-					| [] -> error (Printf.sprintf "Field %s cannot be called on %s" f.cf_name (s_type (print_context()) e.etype)) p
-					| cf :: cfl ->
-						match follow (apply_params a.a_params pl (monomorphs cf.cf_params cf.cf_type)) with
-							| TFun((_,_,t1) :: _,_) when type_iseq t1 (Abstract.get_underlying_type a pl) ->
-								cf
-							| _ ->
-								loop cfl
+		| TAbstract (a,pl) ->
+			let static_abstract_access_through_instance = ref false in
+			(try
+				let c = (match a.a_impl with None -> raise Not_found | Some c -> c) in
+				let f = PMap.find i c.cl_statics in
+				if not (can_access ctx c f true) && not ctx.untyped then display_error ctx ("Cannot access private field " ^ i) p;
+				let field_type f =
+					if not (Meta.has Meta.Impl f.cf_meta) then begin
+						static_abstract_access_through_instance := true;
+						raise Not_found;
+					end;
+					let t = field_type ctx c [] f p in
+					apply_params a.a_params pl t
 				in
-				let f = match f.cf_overloads with
-					| [] -> f
-					| cfl -> loop (f :: cfl)
-				in
-				let t = field_type f in
-				begin match follow t with
-					| TFun((_,_,t1) :: _,_) -> ()
-					| _ -> error ("Invalid call to static function " ^ i ^ " through abstract instance") p
-				end;
-				let ef = field_expr f t in
-				AKUsing (ef,c,f,e)
-			| MSet, _ ->
-				error "This operation is unsupported" p)
-		with Not_found -> try
-			let _,el,_ = Meta.get Meta.Forward a.a_meta in
-			if not (List.exists (fun e -> match fst e with
-				| EConst(Ident s | String s) -> s = i
-				| _ -> error "Identifier or string expected as argument to @:forward" (pos e)
-			) el) && el <> [] then raise Not_found;
-			type_field ctx {e with etype = apply_params a.a_params pl a.a_this} i p mode;
-		with Not_found -> try
-			using_field ctx mode e i p
-		with Not_found -> try
-			(match ctx.curfun, e.eexpr with
-			| FunMemberAbstract, TConst (TThis) -> type_field ctx {e with etype = apply_params a.a_params pl a.a_this} i p mode;
-			| _ -> raise Not_found)
-(* 		with Not_found -> try
-			let c = (match a.a_impl with None -> raise Not_found | Some c -> c) in
-			let cf = PMap.find "resolve" c.cl_statics in
-			if not (Meta.has Meta.Resolve cf.cf_meta) then raise Not_found;
-			let et = type_module_type ctx (TClassDecl c) None p in
-			let t = apply_params a.a_params pl (field_type ctx c [] cf p) in
-			let ef = mk (TField (et,FStatic (c,cf))) t p in
-			AKExpr ((!build_call_ref) ctx (AKUsing(ef,c,cf,e)) [EConst (String i),p] NoValue p) *)
-		with Not_found ->
-			if !static_abstract_access_through_instance then error ("Invalid call to static function " ^ i ^ " through abstract instance") p
-			else no_field())
-	| _ ->
-		try using_field ctx mode e i p with Not_found -> no_field()
+				let et = type_module_type ctx (TClassDecl c) None p in
+				let field_expr f t = mk (TField (et,FStatic (c,f))) t p in
+				(match mode, f.cf_kind with
+				| (MGet | MCall), Var {v_read = AccCall } ->
+					(* getter call *)
+					let f = PMap.find ("get_" ^ f.cf_name) c.cl_statics in
+					let t = field_type f in
+					let r = match follow t with TFun(_,r) -> r | _ -> raise Not_found in
+					let ef = field_expr f t in
+					AKExpr(make_call ctx ef [e] r p)
+				| MSet, Var {v_write = AccCall } ->
+					let f = PMap.find ("set_" ^ f.cf_name) c.cl_statics in
+					let t = field_type f in
+					let ef = field_expr f t in
+					AKUsing (ef,c,f,e)
+				| (MGet | MCall), Var {v_read = AccNever} ->
+					AKNo f.cf_name
+				| (MGet | MCall), _ ->
+					let rec loop cfl = match cfl with
+						| [] -> error (Printf.sprintf "Field %s cannot be called on %s" f.cf_name (s_type (print_context()) e.etype)) p
+						| cf :: cfl ->
+							match follow (apply_params a.a_params pl (monomorphs cf.cf_params cf.cf_type)) with
+								| TFun((_,_,t1) :: _,_) when type_iseq t1 (Abstract.get_underlying_type a pl) ->
+									cf
+								| _ ->
+									loop cfl
+					in
+					let f = match f.cf_overloads with
+						| [] -> f
+						| cfl -> loop (f :: cfl)
+					in
+					let t = field_type f in
+					begin match follow t with
+						| TFun((_,_,t1) :: _,_) -> ()
+						| _ -> error ("Invalid call to static function " ^ i ^ " through abstract instance") p
+					end;
+					let ef = field_expr f t in
+					AKUsing (ef,c,f,e)
+				| MSet, _ ->
+					error "This operation is unsupported" p)
+			with Not_found -> try
+				let _,el,_ = Meta.get Meta.Forward a.a_meta in
+				if not (List.exists (fun e -> match fst e with
+					| EConst(Ident s | String s) -> s = i
+					| _ -> error "Identifier or string expected as argument to @:forward" (pos e)
+				) el) && el <> [] then raise Not_found;
+				type_field ctx {e with etype = apply_params a.a_params pl a.a_this} i p mode;
+			with Not_found -> try
+				using_field ctx mode e i p
+			with Not_found -> try
+				(match ctx.curfun, e.eexpr with
+				| FunMemberAbstract, TConst (TThis) -> type_field ctx {e with etype = apply_params a.a_params pl a.a_this} i p mode;
+				| _ -> raise Not_found)
+	(* 		with Not_found -> try
+				let c = (match a.a_impl with None -> raise Not_found | Some c -> c) in
+				let cf = PMap.find "resolve" c.cl_statics in
+				if not (Meta.has Meta.Resolve cf.cf_meta) then raise Not_found;
+				let et = type_module_type ctx (TClassDecl c) None p in
+				let t = apply_params a.a_params pl (field_type ctx c [] cf p) in
+				let ef = mk (TField (et,FStatic (c,cf))) t p in
+				AKExpr ((!build_call_ref) ctx (AKUsing(ef,c,cf,e)) [EConst (String i),p] NoValue p) *)
+			with Not_found ->
+				if !static_abstract_access_through_instance then error ("Invalid call to static function " ^ i ^ " through abstract instance") p
+				else no_field())
+		| _ ->
+			try using_field ctx mode e i p with Not_found -> no_field())
 
 let type_bind ctx (e : texpr) params p =
 	let args,ret = match follow e.etype with TFun(args, ret) -> args, ret | _ -> error "First parameter of callback is not a function" p in
