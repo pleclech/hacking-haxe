@@ -259,7 +259,7 @@ let build_class com c file =
 				else args in
 				let f = {
 					f_params = [];
-					f_args = args;
+					f_args = List.map(fun (n,o,eo,x) -> (n,o,eo,x,[])) args;
 					f_type = Some (make_type t.hlmt_ret);
 					f_expr = None;
 				} in

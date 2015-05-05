@@ -50,6 +50,7 @@ module Meta = struct
 		| ClassCode
 		| Commutative
 		| CompilerGenerated
+		| Const
 		| CoreApi
 		| CoreType
 		| CppFileCode
@@ -324,7 +325,7 @@ and complex_type =
 
 and func = {
 	f_params : type_param list;
-	f_args : (string * bool * complex_type option * expr option) list;
+	f_args : (string * bool * complex_type option * expr option * metadata) list;
 	f_type : complex_type option;
 	f_expr : expr option;
 }
@@ -340,7 +341,7 @@ and expr_def =
 	| ECall of expr * expr list
 	| ENew of type_path * expr list
 	| EUnop of unop * unop_flag * expr
-	| EVars of (string * complex_type option * expr option) list
+	| EVars of (string * complex_type option * expr option * metadata) list
 	| EFunction of string option * func
 	| EBlock of expr list
 	| EFor of expr * expr
@@ -707,7 +708,7 @@ let map_expr loop (e,p) =
 	and func f =
 		{
 			f_params = List.map tparamdecl f.f_params;
-			f_args = List.map (fun (n,o,t,e) -> n,o,opt ctype t,opt loop e) f.f_args;
+			f_args = List.map (fun (n,o,t,e,m) -> n,o,opt ctype t,opt loop e,m) f.f_args;
 			f_type = opt ctype f.f_type;
 			f_expr = opt loop f.f_expr;
 		}
@@ -724,7 +725,7 @@ let map_expr loop (e,p) =
 	| ECall (e,el) -> ECall (loop e, List.map loop el)
 	| ENew (t,el) -> ENew (tpath t,List.map loop el)
 	| EUnop (op,f,e) -> EUnop (op,f,loop e)
-	| EVars vl -> EVars (List.map (fun (n,t,eo) -> n,opt ctype t,opt loop eo) vl)
+	| EVars vl -> EVars (List.map (fun (n,t,eo,m) -> n,opt ctype t,opt loop eo,m) vl)
 	| EFunction (n,f) -> EFunction (n,func f)
 	| EBlock el -> EBlock (List.map loop el)
 	| EFor (e1,e2) -> EFor (loop e1, loop e2)

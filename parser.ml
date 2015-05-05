@@ -253,11 +253,12 @@ let reify in_macro =
 		| CTExtend (tl,fields) -> ct "TExtend" [to_array to_tpath tl p; to_array to_cfield fields p]
 		| CTOptional t -> ct "TOptional" [to_ctype t p]
 	and to_fun f p =
-		let farg (n,o,t,e) p =
+		let farg (n,o,t,e,m) p =
 			let fields = [
 				"name", to_string n p;
 				"opt", to_bool o p;
 				"type", to_opt to_ctype t p;
+				"meta", to_meta m p;
 			] in
 			to_obj (match e with None -> fields | Some e -> fields @ ["value",to_expr e p]) p
 		in
@@ -370,11 +371,12 @@ let reify in_macro =
 			) [] p in
 			expr "EUnop" [op;to_bool (flag = Postfix) p;loop e]
 		| EVars vl ->
-			expr "EVars" [to_array (fun (v,t,e) p ->
+			expr "EVars" [to_array (fun (v,t,e,m) p ->
 				let fields = [
 					"name", to_string v p;
 					"type", to_opt to_ctype t p;
 					"expr", to_opt to_expr e p;
+					"meta", to_meta m p;
 				] in
 				to_obj fields p
 			) vl p]
@@ -1030,8 +1032,10 @@ and parse_fun_name = parser
 	| [< '(Kwd New,_) >] -> "new"
 
 and parse_fun_param = parser
-	| [< '(Question,_); name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,true,t,c)
-	| [< name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,false,t,c)
+	| [< meta = parse_meta; s >] ->
+		match s with parser
+			| [< '(Question,_); name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,true,t,c,meta)
+			| [< name, _ = dollar_ident; t = parse_type_opt; c = parse_fun_param_value >] -> (name,false,t,c,meta)
 
 and parse_fun_param_value = parser
 	| [< '(Binop OpAssign,_); e = toplevel_expr >] -> Some e
@@ -1126,7 +1130,7 @@ and parse_array_decl = parser
 		[]
 
 and parse_var_decl_head = parser
-	| [< name, _ = dollar_ident; t = parse_type_opt >] -> (name,t)
+	| [< meta = parse_meta; name, _ = dollar_ident; t = parse_type_opt >] -> (name,t,meta)
 
 and parse_var_assignment = parser
 	| [< '(Binop OpAssign,p1); s >] ->
@@ -1137,12 +1141,12 @@ and parse_var_assignment = parser
 	| [< >] -> None
 
 and parse_var_decls_next vl = parser
-	| [< '(Comma,p1); name,t = parse_var_decl_head; s >] ->
+	| [< '(Comma,p1); name,t,meta = parse_var_decl_head; s >] ->
 		begin try
 			let eo = parse_var_assignment s in
-			parse_var_decls_next ((name,t,eo) :: vl) s
+			parse_var_decls_next ((name,t,eo,meta) :: vl) s
 		with Display e ->
-			let v = (name,t,Some e) in
+			let v = (name,t,Some e,meta) in
 			let e = (EVars(List.rev (v :: vl)),punion p1 (pos e)) in
 			display e
 		end
@@ -1150,13 +1154,13 @@ and parse_var_decls_next vl = parser
 		vl
 
 and parse_var_decls p1 = parser
-	| [< name,t = parse_var_decl_head; s >] ->
+	| [< name,t,meta = parse_var_decl_head; s >] ->
 		let eo = parse_var_assignment s in
-		List.rev (parse_var_decls_next [name,t,eo] s)
+		List.rev (parse_var_decls_next [name,t,eo,meta] s)
 	| [< s >] -> error (Custom "Missing variable identifier") p1
 
 and parse_var_decl = parser
-	| [< name,t = parse_var_decl_head; eo = parse_var_assignment >] -> (name,t,eo)
+	| [< name,t,meta = parse_var_decl_head; eo = parse_var_assignment >] -> (name,t,eo,meta)
 
 and inline_function = parser
 	| [< '(Kwd Inline,_); '(Kwd Function,p1) >] -> true, p1

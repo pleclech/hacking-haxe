@@ -167,7 +167,7 @@ let make_module ctx mpath file tdecls loadp =
 						display_error ctx "Member property accessors must be get/set or never" p;
 						f
 					| FFun fu when f.cff_name = "new" && not stat ->
-						let init p = (EVars ["this",Some this_t,None],p) in
+						let init p = (EVars ["this",Some this_t,None,[]],p) in
 						let cast e = (ECast(e,None)),pos e in
 						let check_type e ct = (ECheckType(e,ct)),pos e in
 						let ret p = (EReturn (Some (cast (EConst (Ident "this"),p))),p) in
@@ -196,7 +196,7 @@ let make_module ctx mpath file tdecls loadp =
 						{ f with cff_name = "_new"; cff_access = AStatic :: f.cff_access; cff_kind = FFun fu; cff_meta = (Meta.Impl,[],p) :: f.cff_meta }
 					| FFun fu when not stat ->
 						if Meta.has Meta.From f.cff_meta then error "@:from cast functions must be static" f.cff_pos;
-						let fu = { fu with f_args = (if List.mem AMacro f.cff_access then fu.f_args else ("this",false,Some this_t,None) :: fu.f_args) } in
+						let fu = { fu with f_args = (if List.mem AMacro f.cff_access then fu.f_args else ("this",false,Some this_t,None,[]) :: fu.f_args) } in
 						{ f with cff_kind = FFun fu; cff_access = AStatic :: f.cff_access; cff_meta = (Meta.Impl,[],p) :: f.cff_meta }
 					| _ ->
 						f
@@ -363,7 +363,7 @@ let requires_value_meta com co =
 
 let generate_value_meta com co cf args =
 	if requires_value_meta com co then begin
-		let values = List.fold_left (fun acc (name,_,_,eo) -> match eo with Some e -> (name,e) :: acc | _ -> acc) [] args in
+		let values = List.fold_left (fun acc (name,_,_,eo,m) -> match eo with Some e -> (name,e) :: acc | _ -> acc) [] args in
 		match values with
 			| [] -> ()
 			| _ -> cf.cf_meta <- ((Meta.Value,[EObjectDecl values,cf.cf_pos],cf.cf_pos) :: cf.cf_meta)
@@ -562,7 +562,7 @@ and load_complex_type ctx p t =
 					no_expr fd.f_expr;
 					let old = ctx.type_params in
 					ctx.type_params <- !params @ old;
-					let args = List.map (fun (name,o,t,e) -> no_expr e; name, o, topt t) fd.f_args in
+					let args = List.map (fun (name,o,t,e,m) -> no_expr e; name, o, topt t) fd.f_args in
 					let t = TFun (args,topt fd.f_type), Method (if !dyn then MethDynamic else MethNormal) in
 					ctx.type_params <- old;
 					t
@@ -630,7 +630,7 @@ and init_meta_overloads ctx co cf =
 			let params = (!type_function_params_rec) ctx f cf.cf_name p in
 			ctx.type_params <- params @ ctx.type_params;
 			let topt = function None -> error "Explicit type required" p | Some t -> load_complex_type ctx p t in
-			let args = List.map (fun (a,opt,t,_) ->  a,opt,topt t) f.f_args in
+			let args = List.map (fun (a,opt,t,_,m) ->  a,opt,topt t) f.f_args in
 			let cf = { cf with cf_type = TFun (args,topt f.f_type); cf_params = params; cf_meta = cf_meta} in
 			generate_value_meta ctx.com co cf f.f_args;
 			overloads := cf :: !overloads;
@@ -1763,10 +1763,10 @@ let patch_class ctx c fields =
 				(* patch arguments types *)
 				(match f.cff_kind with
 				| FFun ff ->
-					let param ((n,opt,t,e) as p) =
+					let param ((n,opt,t,e,m) as p) =
 						try
 							let t2 = (try Hashtbl.find h (("$" ^ f.cff_name ^ "__" ^ n),false) with Not_found -> Hashtbl.find h (("$" ^ n),false)) in
-							n, opt, t2.tp_type, e
+							n, opt, t2.tp_type, e, m
 						with Not_found ->
 							p
 					in
@@ -1807,7 +1807,7 @@ let build_enum_abstract ctx c a fields p =
 		| _ ->
 			()
 	) fields;
-	EVars ["",Some (CTAnonymous fields),None],p
+	EVars ["",Some (CTAnonymous fields),None,[]],p
 
 let is_java_native_function meta = try
 	match Meta.get Meta.Native meta with
@@ -1879,7 +1879,7 @@ let init_class ctx c p context_init herits fields =
 	let get_fields() = !fields in
 	build_module_def ctx (TClassDecl c) c.cl_meta get_fields context_init (fun (e,p) ->
 		match e with
-		| EVars [_,Some (CTAnonymous f),None] ->
+		| EVars [_,Some (CTAnonymous f),None,_] ->
 			List.iter (fun f ->
 				if List.mem AMacro f.cff_access then
 					(match ctx.g.macros with
@@ -2205,7 +2205,7 @@ let init_class ctx c p context_init herits fields =
 					{
 						f_params = fd.f_params;
 						f_type = (match fd.f_type with None -> Some texpr | Some t -> no_expr_of t);
-						f_args = List.map (fun (a,o,t,e) -> a,o,(match t with None -> Some texpr | Some t -> no_expr_of t),e) fd.f_args;
+						f_args = List.map (fun (a,o,t,e,m) -> a,o,(match t with None -> Some texpr | Some t -> no_expr_of t),e,m) fd.f_args;
 						f_expr = fd.f_expr;
 					}
 				end else
@@ -2219,7 +2219,7 @@ let init_class ctx c p context_init herits fields =
 					{
 						f_params = fd.f_params;
 						f_type = (match fd.f_type with Some (CTPath t) -> to_dyn t | _ -> tdyn);
-						f_args = List.map (fun (a,o,t,_) -> a,o,(match t with Some (CTPath t) -> to_dyn t | _ -> tdyn),None) fd.f_args;
+						f_args = List.map (fun (a,o,t,_,m) -> a,o,(match t with Some (CTPath t) -> to_dyn t | _ -> tdyn),None,m) fd.f_args;
 						f_expr = None;
 					}
 			end in
@@ -2235,7 +2235,7 @@ let init_class ctx c p context_init herits fields =
 			(* TODO is_lib: avoid forcing the return type to be typed *)
 			let ret = if constr then ctx.t.tvoid else type_opt ctx p fd.f_type in
 			let rec loop args = match args with
-				| (name,opt,t,ct) :: args ->
+				| (name,opt,t,ct,m) :: args ->
 					(* TODO is_lib: avoid forcing the field to be typed *)
 					let t, ct = type_function_arg ctx (type_opt ctx p t) ct opt p in
 					delay ctx PTypeField (fun() -> match follow t with
@@ -2911,19 +2911,19 @@ let rec init_module_type ctx context_init do_init (decl,p) =
 					cff_access = [];
 					cff_kind = (match c.ec_args, c.ec_params with
 						| [], [] -> FVar (c.ec_type,None)
-						| _ -> FFun { f_params = c.ec_params; f_type = c.ec_type; f_expr = None; f_args = List.map (fun (n,o,t) -> n,o,Some t,None) c.ec_args });
+						| _ -> FFun { f_params = c.ec_params; f_type = c.ec_type; f_expr = None; f_args = List.map (fun (n,o,t) -> n,o,Some t,None,[]) c.ec_args });
 				}
 			) (!constructs)
 		in
 		let init () = List.iter (fun f -> f()) !context_init in
 		build_module_def ctx (TEnumDecl e) e.e_meta get_constructs init (fun (e,p) ->
 			match e with
-			| EVars [_,Some (CTAnonymous fields),None] ->
+			| EVars [_,Some (CTAnonymous fields),None,_] ->
 				constructs := List.map (fun f ->
 					let args, params, t = (match f.cff_kind with
 					| FVar (t,None) -> [], [], t
 					| FFun { f_params = pl; f_type = t; f_expr = (None|Some (EBlock [],_)); f_args = al } ->
-						let al = List.map (fun (n,o,t,_) -> match t with None -> error "Missing function parameter type" f.cff_pos | Some t -> n,o,t) al in
+						let al = List.map (fun (n,o,t,_,m) -> match t with None -> error "Missing function parameter type" f.cff_pos | Some t -> n,o,t) al in
 						al, pl, t
 					| _ ->
 						error "Invalid enum constructor in @:build result" p

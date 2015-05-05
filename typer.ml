@@ -1315,6 +1315,9 @@ let rec type_ident_raise ?(imported_enums=true) ctx i p mode =
 	| _ ->
 	try
 		let v = PMap.find i ctx.locals in
+		if mode=MSet && Meta.has Meta.Const v.v_meta then
+			AKNo i
+		else
 		(match v.v_extra with
 		| Some (params,e) ->
 			let t = monomorphs params v.v_type in
@@ -1415,15 +1418,29 @@ and type_field ?(resume=false) ctx e i p mode =
 			|| List.exists (fun (_,_,cf) -> cf.cf_name = i) a.a_unops
 			|| List.exists (fun cf -> cf.cf_name = i) a.a_array
 		in
+		let expr() = AKExpr (mk (TField (e,FDynamic i)) (mk_mono()) p) in
 		if not ctx.untyped then begin
 			match t with
 			| TAbstract(a,_) when has_special_field a ->
 				(* the abstract field is not part of the field list, which is only true when it has no expression (issue #2344) *)
 				display_error ctx ("Field " ^ i ^ " cannot be called directly because it has no expression") p;
+				expr()
 			| _ ->
-				display_error ctx (string_error i (string_source t) (s_type (print_context()) t ^ " has no field " ^ i)) p;
-		end;
-		AKExpr (mk (TField (e,FDynamic i)) (mk_mono()) p)
+				let error() =
+					display_error ctx (string_error i (string_source t) (s_type (print_context()) t ^ " has no field " ^ i)) p;
+					expr()
+				in
+				if i="__to_const__" then
+					match e.eexpr with
+					| TLocal v ->
+						v.v_meta <- (Meta.Const, [], p) :: v.v_meta;
+						AKExpr(mk (TBlock []) ctx.t.tvoid p)
+					| _ -> error()
+				else
+					error()
+		end
+		else
+			expr()
 	in
 	match follow e.etype with
 	| TInst (c,params) ->
@@ -2677,7 +2694,7 @@ and type_access ctx e p mode =
 
 and type_vars ctx vl p in_block =
 	let save = if in_block then (fun() -> ()) else save_locals ctx in
-	let vl = List.map (fun (v,t,e) ->
+	let vl = List.map (fun (v,t,e,m) ->
 		try
 			let t = Typeload.load_type_opt ctx p t in
 			let e = (match e with
@@ -2688,11 +2705,11 @@ and type_vars ctx vl p in_block =
 					Some e
 			) in
 			if v.[0] = '$' && ctx.com.display = DMNone then error "Variables names starting with a dollar are not allowed" p;
-			add_local ctx v t, e
+			add_local ~meta:m ctx v t, e
 		with
 			Error (e,p) ->
 				display_error ctx (error_msg e) p;
-				add_local ctx v t_dynamic, None
+				add_local ~meta:m ctx v t_dynamic, None
 	) vl in
 	save();
 
@@ -3395,7 +3412,7 @@ and type_expr ctx (e,p) (with_type:with_type) =
 		ctx.type_params <- params @ ctx.type_params;
 		if not inline then ctx.in_loop <- false;
 		let rt = Typeload.load_type_opt ctx p f.f_type in
-		let args = List.map (fun (s,opt,t,c) ->
+		let args = List.map (fun (s,opt,t,c,m) ->
 			let t = Typeload.load_type_opt ctx p t in
 			let t, c = Typeload.type_function_arg ctx t c opt p in
 			s , c, t
@@ -4774,7 +4791,7 @@ let type_macro ctx mode cpath f (el:Ast.expr list) p =
 			with Error (Custom _,_) ->
 				(* if it's not a constant, let's make something that is typed as haxe.macro.Expr - for nice error reporting *)
 				(EBlock [
-					(EVars ["__tmp",Some (CTPath ctexpr),Some (EConst (Ident "null"),p)],p);
+					(EVars ["__tmp",Some (CTPath ctexpr),Some (EConst (Ident "null"),p),[]],p);
 					(EConst (Ident "__tmp"),p);
 				],p)
 			) in
@@ -4819,7 +4836,7 @@ let type_macro ctx mode cpath f (el:Ast.expr list) p =
 						| _ ->
 							List.map Interp.decode_field (Interp.dec_array v)
 					) in
-					(EVars ["fields",Some (CTAnonymous fields),None],p)
+					(EVars ["fields",Some (CTAnonymous fields),None,[]],p)
 				| MMacroType ->
 					let t = if v = Interp.VNull then
 						mk_mono()

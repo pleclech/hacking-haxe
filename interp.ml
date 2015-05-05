@@ -3888,12 +3888,13 @@ and encode_tparam_decl tp =
 and encode_fun f =
 	enc_obj [
 		"params", enc_array (List.map encode_tparam_decl f.f_params);
-		"args", enc_array (List.map (fun (n,opt,t,e) ->
+		"args", enc_array (List.map (fun (n,opt,t,e,m) ->
 			enc_obj [
 				"name", enc_string n;
 				"opt", VBool opt;
 				"type", null encode_ctype t;
 				"value", null encode_expr e;
+				"meta",encode_meta_content m;
 			]
 		) f.f_args);
 		"ret", null encode_ctype f.f_type;
@@ -3927,11 +3928,12 @@ and encode_expr e =
 			| EUnop (op,flag,e) ->
 				9, [encode_unop op; VBool (match flag with Prefix -> false | Postfix -> true); loop e]
 			| EVars vl ->
-				10, [enc_array (List.map (fun (v,t,eo) ->
+				10, [enc_array (List.map (fun (v,t,eo,m) ->
 					enc_obj [
 						"name",enc_string v;
 						"type",null encode_ctype t;
 						"expr",null loop eo;
+						"meta",encode_meta_content m;
 					]
 				) vl)]
 			| EFunction (name,f) ->
@@ -4125,7 +4127,7 @@ and decode_fun v =
 	{
 		f_params = decode_tparams (field v "params");
 		f_args = List.map (fun o ->
-			(dec_string (field o "name"),(match field o "opt" with VNull -> false | v -> dec_bool v),opt decode_ctype (field o "type"),opt decode_expr (field o "value"))
+			(dec_string (field o "name"),(match field o "opt" with VNull -> false | v -> dec_bool v),opt decode_ctype (field o "type"),opt decode_expr (field o "value"), opt_list decode_meta_content (field v "meta"))
 		) (dec_array (field v "args"));
 		f_type = opt decode_ctype (field v "ret");
 		f_expr = opt decode_expr (field v "expr");
@@ -4215,7 +4217,7 @@ let rec decode_expr v =
 			EUnop (decode_unop op,(if f then Postfix else Prefix),loop e)
 		| 10, [vl] ->
 			EVars (List.map (fun v ->
-				(dec_string (field v "name"),opt decode_ctype (field v "type"),opt loop (field v "expr"))
+				(dec_string (field v "name"),opt decode_ctype (field v "type"),opt loop (field v "expr"),decode_meta_content (field v "meta"))
 			) (dec_array vl))
 		| 11, [fname;f] ->
 			EFunction (opt dec_string fname,decode_fun f)
@@ -4867,7 +4869,7 @@ let decode_type_def v =
 	let tdef = (match decode_enum (field v "kind") with
 	| 0, [] ->
 		let conv f =
-			let loop (n,opt,t,_) =
+			let loop (n,opt,t,_,m) =
 				match t with
 				| None -> raise Invalid_expr
 				| Some t -> n, opt, t
@@ -5049,10 +5051,10 @@ let rec make_ast e =
 	| TNew (c,pl,el) -> ENew ((match (try make_type (TInst (c,pl)) with Exit -> make_type (TInst (c,[]))) with CTPath p -> p | _ -> assert false),List.map make_ast el)
 	| TUnop (op,p,e) -> EUnop (op,p,make_ast e)
 	| TFunction f ->
-		let arg (v,c) = v.v_name, false, mk_ot v.v_type, (match c with None -> None | Some c -> Some (EConst (mk_const c),e.epos)) in
+		let arg (v,c) = v.v_name, false, mk_ot v.v_type, (match c with None -> None | Some c -> Some (EConst (mk_const c),e.epos)),[] in
 		EFunction (None,{ f_params = []; f_args = List.map arg f.tf_args; f_type = mk_ot f.tf_type; f_expr = Some (make_ast f.tf_expr) })
 	| TVar (v,eo) ->
-		EVars ([v.v_name, mk_ot v.v_type, eopt eo])
+		EVars ([v.v_name, mk_ot v.v_type, eopt eo, v.v_meta])
 	| TBlock el -> EBlock (List.map make_ast el)
 	| TFor (v,it,e) ->
 		let ein = (EIn ((EConst (Ident v.v_name),it.epos),make_ast it),it.epos) in
