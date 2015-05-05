@@ -979,7 +979,7 @@ and parse_class_field s =
 		| Some p -> p
 		| None -> match s with parser [< '(Kwd Var, p) >] -> p
 		in
-		let name, pos, k = (match s with parser
+		let name, pos, k, meta = (match s with parser
 		| [< p1=parse_var; name, _ = dollar_ident; s >] ->
 			(match s with parser
 			| [< '(POpen,_); i1 = property_ident; '(Comma,_); i2 = property_ident; '(PClose,_) >] ->
@@ -989,14 +989,23 @@ and parse_class_field s =
 				| [< '(Semicolon,p2) >] -> None , p2
 				| [< >] -> serror()
 				) in
-				name, punion p1 p2, FProp (i1,i2,t, e)
+				name, punion p1 p2, FProp (i1,i2,t, e), meta
 			| [< t = parse_type_opt; s >] ->
 				let e , p2 = (match s with parser
 				| [< '(Binop OpAssign,_); e = toplevel_expr; p2 = semicolon >] -> Some e , p2
 				| [< '(Semicolon,p2) >] -> None , p2
 				| [< >] -> serror()
 				) in
-				name, punion p1 p2, FVar (t,e))
+				let e, meta =
+					if sp=None then
+						FVar (t,e), meta
+					else
+						let t =
+							if t=None then Some(CTPath (mk_type_inf [])) else t
+						in
+						FProp("default", "never", t, e), (Meta.AllowWrite , [mk_eident "new" p1], p1)::meta
+				in
+				name, punion p1 p2, e, meta)
 		| [< '(Kwd Function,p1); name = parse_fun_name; pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
 			let e, p2 = (match s with parser
 				| [< e = toplevel_expr; s >] ->
@@ -1011,7 +1020,7 @@ and parse_class_field s =
 				f_type = t;
 				f_expr = e;
 			} in
-			name, punion p1 p2, FFun f
+			name, punion p1 p2, FFun f, meta
 		| [< >] ->
 			if al = [] then raise Stream.Failure else serror()
 		) in
@@ -1544,6 +1553,7 @@ let parse ctx code =
 	last_doc := None;
 	in_macro := Common.defined ctx Common.Define.Macro;
 	use_extended_syntax := ctx.Common.use_extended_syntax || Common.defined ctx Common.Define.UseExtendedSyntax;
+	warning := ctx.Common.warning;
 	Lexer.skip_header code;
 
 	let sraw = Stream.from (fun _ -> Some (Lexer.token code)) in
