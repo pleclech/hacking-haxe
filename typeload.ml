@@ -3175,7 +3175,7 @@ let resolve_module_file com m remap p =
 	) in
 	let file =
 		let rec loop = function
-			| [] -> raise (Error (Module_not_found m,p))
+			| [] -> raise Not_found
 			| h :: t ->
 				try
 					let file = Common.find_file com (file ^ h) in
