@@ -21,6 +21,7 @@
  *)
 
 open Ast
+open Extparser
 
 type error_msg =
 	| Unexpected of token
@@ -1512,9 +1513,11 @@ let parse ctx code =
 	let old = Lexer.save() in
 	let old_cache = !cache in
 	let mstack = ref [] in
+	let old_use_extended_syntax = !use_extended_syntax in
 	cache := DynArray.create();
 	last_doc := None;
 	in_macro := Common.defined ctx Common.Define.Macro;
+	use_extended_syntax := ctx.Common.use_extended_syntax || Common.defined ctx Common.Define.UseExtendedSyntax;
 	Lexer.skip_header code;
 
 	let sraw = Stream.from (fun _ -> Some (Lexer.token code)) in
@@ -1598,6 +1601,7 @@ let parse ctx code =
 		let l = parse_file s in
 		(match !mstack with p :: _ when not (do_resume()) -> error Unclosed_macro p | _ -> ());
 		cache := old_cache;
+		use_extended_syntax := old_use_extended_syntax;
 		Lexer.restore old;
 		l
 	with
@@ -1606,8 +1610,10 @@ let parse ctx code =
 			let last = (match Stream.peek s with None -> last_token s | Some t -> t) in
 			Lexer.restore old;
 			cache := old_cache;
+			use_extended_syntax := old_use_extended_syntax;
 			error (Unexpected (fst last)) (pos last)
 		| e ->
 			Lexer.restore old;
 			cache := old_cache;
+			use_extended_syntax := old_use_extended_syntax;
 			raise e
