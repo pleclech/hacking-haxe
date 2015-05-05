@@ -994,7 +994,7 @@ and parse_class_field s =
 			let e, p2 = (match s with parser
 				| [< e = toplevel_expr; s >] ->
 					(try ignore(semicolon s) with Error (Missing_semicolon,p) -> !display_error Missing_semicolon p);
-					Some e, pos e
+					Some (add_const_init al e), pos e
 				| [< '(Semicolon,p) >] -> None, p
 				| [< >] -> serror()
 			) in
@@ -1191,7 +1191,7 @@ and parse_function p1 inl = parser
 				f_params = pl;
 				f_type = t;
 				f_args = al;
-				f_expr = Some e;
+				f_expr = Some (add_const_init al e);
 			} in
 			EFunction ((match name with None -> None | Some (name,_) -> Some (if inl then "inline_" ^ name else name)),f), punion p1 (pos e)
 		in
