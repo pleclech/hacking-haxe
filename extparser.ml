@@ -62,4 +62,13 @@ let to_pseudo_private cn fl =
 			cf.cff_access <- ac;
 			cf.cff_meta <- (Meta.Native, [mk_estring ("_"^(String.lowercase cn)^"_"^cf.cff_name) cf.cff_pos], cf.cff_pos)::cf.cff_meta;
 		end
-	in List.iter tfr_field fl;
+	in List.iter tfr_field fl
+
+let for_ctx = ref []
+let push_for_ctx (a:expr option) = for_ctx := a :: !for_ctx
+let pop_for_ctx() = match !for_ctx with
+	| [] -> ()
+	| x::xs -> for_ctx := xs
+let peek_for_ctx() = match !for_ctx with
+	| [] -> None
+	| x::xs -> x
