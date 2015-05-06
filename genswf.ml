@@ -816,6 +816,7 @@ let build_swf9 com file swc =
 						| _ :: [e] ->
 							begin match fst e with
 								| EObjectDecl fl ->
+									let fl = List.map(fun (n,e,m) -> (n,e)) fl in
 									begin try ttf_config.ttfc_font_name <- get_string (List.assoc "fontName" fl)
 									with Not_found -> () end
 								| _ ->

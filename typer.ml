@@ -72,13 +72,13 @@ let build_call_ref : (typer -> access_kind -> expr list -> with_type -> pos -> t
 let mk_infos ctx p params =
 	let file = if ctx.in_macro then p.pfile else if Common.defined ctx.com Define.AbsolutePath then Common.get_full_path p.pfile else Filename.basename p.pfile in
 	(EObjectDecl (
-		("fileName" , (EConst (String file) , p)) ::
-		("lineNumber" , (EConst (Int (string_of_int (Lexer.get_error_line p))),p)) ::
-		("className" , (EConst (String (s_type_path ctx.curclass.cl_path)),p)) ::
+		("fileName" , (EConst (String file) , p), []) ::
+		("lineNumber" , (EConst (Int (string_of_int (Lexer.get_error_line p))),p), []) ::
+		("className" , (EConst (String (s_type_path ctx.curclass.cl_path)),p), []) ::
 		if ctx.curfield.cf_name = "" then
 			params
 		else
-			("methodName", (EConst (String ctx.curfield.cf_name),p)) :: params
+			("methodName", (EConst (String ctx.curfield.cf_name),p), []) :: params
 	) ,p)
 
 let check_assign ctx e =
@@ -1126,6 +1126,9 @@ let field_access ctx mode f fmode t e p =
 	let normal() =
 		match follow e.etype with
 		| TAnon a ->
+			if mode=MSet && Meta.has Meta.Const f.cf_meta then
+				AKNo f.cf_name
+			else
 			(match !(a.a_status) with
 			| EnumStatics en ->
 				let c = (try PMap.find f.cf_name en.e_constrs with Not_found -> assert false) in
@@ -1429,6 +1432,7 @@ and type_field ?(resume=false) ctx e i p mode =
 		else
 			None
 	in
+	let expr() = AKExpr (mk (TField (e,FDynamic i)) (mk_mono()) p) in
 	let no_field() =
 		if resume then raise Not_found;
 		let t = match follow e.etype with
@@ -1443,7 +1447,6 @@ and type_field ?(resume=false) ctx e i p mode =
 			|| List.exists (fun (_,_,cf) -> cf.cf_name = i) a.a_unops
 			|| List.exists (fun cf -> cf.cf_name = i) a.a_array
 		in
-		let expr() = AKExpr (mk (TField (e,FDynamic i)) (mk_mono()) p) in
 		if not ctx.untyped then begin
 			match t with
 			| TAbstract(a,_) when has_special_field a ->
@@ -2950,13 +2953,14 @@ and type_expr ctx (e,p) (with_type:with_type) =
 		in
 		(match a with
 		| None ->
-			let rec loop (l,acc) (f,e) =
+			let rec loop (l,acc) (f,e,m) =
 				let f,is_quoted,is_valid = Parser.unquote_ident f in
 				if PMap.mem f acc then error ("Duplicate field in object declaration : " ^ f) p;
 				let e = type_expr ctx e Value in
 				(match follow e.etype with TAbstract({a_path=[],"Void"},_) -> error "Fields of type Void are not allowed in structures" e.epos | _ -> ());
 				let cf = mk_field f e.etype e.epos in
 				let e = if is_quoted then wrap_quoted_meta e else e in
+				cf.cf_meta <- m @ cf.cf_meta;
 				((f,e) :: l, if is_valid then begin
 					if String.length f > 0 && f.[0] = '$' then error "Field names starting with a dollar are not allowed" p;
 					PMap.add f cf acc
@@ -2969,7 +2973,7 @@ and type_expr ctx (e,p) (with_type:with_type) =
 		| Some a ->
 			let fields = ref PMap.empty in
 			let extra_fields = ref [] in
-			let fl = List.map (fun (n, e) ->
+			let fl = List.map (fun (n, e, m) ->
 				let n,is_quoted,is_valid = Parser.unquote_ident n in
 				if PMap.mem n !fields then error ("Duplicate field in object declaration : " ^ n) p;
 				let e = try
@@ -2985,6 +2989,7 @@ and type_expr ctx (e,p) (with_type:with_type) =
 				if is_valid then begin
 					if String.length n > 0 && n.[0] = '$' then error "Field names starting with a dollar are not allowed" p;
 					let cf = mk_field n e.etype e.epos in
+					cf.cf_meta <- m @ cf.cf_meta;
 					fields := PMap.add n cf !fields;
 				end;
 				let e = if is_quoted then wrap_quoted_meta e else e in
@@ -3892,7 +3897,7 @@ and type_call ctx e el (with_type:with_type) p =
 		if Common.defined ctx.com Define.NoTraces then
 			null ctx.t.tvoid p
 		else
-		let params = (match el with [] -> [] | _ -> ["customParams",(EArrayDecl el , p)]) in
+		let params = (match el with [] -> [] | _ -> ["customParams",(EArrayDecl el , p), []]) in
 		let infos = mk_infos ctx p params in
 		if (platform ctx.com Js || platform ctx.com Python) && el = [] && has_dce ctx.com then
 			let e = type_expr ctx e Value in

@@ -221,6 +221,7 @@ let reify in_macro =
 		(EConst (Ident (if o then "true" else "false")),p)
 	in
 	let to_obj fields p =
+		let fields = List.map(fun (n,e) -> (n,e,[])) fields in
 		(EObjectDecl fields,p)
 	in
 	let rec to_tparam t p =
@@ -354,7 +355,7 @@ let reify in_macro =
 		| EParenthesis e ->
 			expr "EParenthesis" [loop e]
 		| EObjectDecl fl ->
-			expr "EObjectDecl" [to_array (fun (f,e) -> to_obj [("field",to_string f p);("expr",loop e)]) fl p]
+			expr "EObjectDecl" [to_array (fun (f,e,m) -> to_obj [("field",to_string f p);("expr",loop e)]) fl p]
 		| EArrayDecl el ->
 			expr "EArrayDecl" [to_expr_array el p]
 		| ECall (e,el) ->
@@ -1090,12 +1091,19 @@ and parse_class_herit = parser
 	| [< '(Kwd Extends,_); t = parse_type_path >] -> HExtends t
 	| [< '(Kwd Implements,_); t = parse_type_path >] -> HImplements t
 
-and block1 = parser
-	| [< name,p = dollar_ident; s >] -> block2 name (Ident name) p s
-	| [< '(Const (String name),p); s >] -> block2 (quote_ident name) (String name) p s
+and block1 s =
+	let meta =
+		if !use_extended_syntax then
+			let meta, sp = add_parsed_const (parse_meta s) s in
+			meta
+		else []
+	in
+	match s with parser
+	| [< name,p = dollar_ident; s >] -> block2 ~meta:meta name (Ident name) p s
+	| [< '(Const (String name),p); s >] -> block2 ~meta:meta (quote_ident name) (String name) p s
 	| [< b = block [] >] -> EBlock b
 
-and block2 name ident p s =
+and block2 ?(meta=[]) name ident p s =
 	let default s =
 		let e = expr_next (EConst ident,p) s in
 		try
@@ -1108,7 +1116,7 @@ and block2 name ident p s =
 				EBlock (block [e] s)
 	in
 	match s with parser
-	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e) :: l)
+	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e,meta) :: l)
 	| [< >] ->
 		if !use_extended_syntax then
 			match ident with
@@ -1116,7 +1124,7 @@ and block2 name ident p s =
 				(match Stream.peek s with
 				| Some(Comma, _) ->
 					let e = EConst ident,p in
-					EObjectDecl ((name,e) :: (parse_obj_decl s))
+					EObjectDecl ((name,e,meta) :: (parse_obj_decl s))
 				| _ -> default s)
 			| _ -> default s
 		else default s
@@ -1147,21 +1155,22 @@ and parse_obj_decl = parser
 	| [< '(Comma,_); s >] ->
 		let default s =
 			(match s with parser
-			| [< name, _ = ident; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
-			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
+			| [< name, _ = ident; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e,[]) :: l
+			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e,[]) :: l
 			| [< >] -> [])
 		in
 		if !use_extended_syntax then
+			let meta, sp = add_parsed_const (parse_meta s) s in
 			(match s with parser
 			| [< name, p = ident; s >] ->
 				(match Stream.peek s with
-				| Some (Comma, _) -> (name, mk_eident name p) :: (parse_obj_decl s)
-				| Some (BrClose, _) -> [name, mk_eident name p]
+				| Some (Comma, _) -> (name, mk_eident name p, meta) :: (parse_obj_decl s)
+				| Some (BrClose, _) -> [name, mk_eident name p, meta]
 				| _ ->
 					(match s with parser
-					| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
+					| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e,meta) :: l
 					| [< >] -> []))
-			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
+			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e,meta) :: l
 			| [< >] -> [])
 		else
 			default s

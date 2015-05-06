@@ -2273,9 +2273,9 @@ let macro_lib =
 					| VFloat f -> haxe_float f p
 					| VAbstract (APos p) ->
 						(Ast.EObjectDecl (
-							("fileName" , (Ast.EConst (Ast.String p.Ast.pfile) , p)) ::
-							("lineNumber" , (Ast.EConst (Ast.Int (string_of_int (Lexer.get_error_line p))),p)) ::
-							("className" , (Ast.EConst (Ast.String ("")),p)) ::
+							("fileName" , (Ast.EConst (Ast.String p.Ast.pfile), p), []) ::
+							("lineNumber" , (Ast.EConst (Ast.Int (string_of_int (Lexer.get_error_line p))),p), []) ::
+							("className" , (Ast.EConst (Ast.String ("")),p), []) ::
 							[]
 						), p)
 					| VString _ | VArray _ | VAbstract _ | VFunction _ | VClosure _ as v -> error v
@@ -2286,7 +2286,7 @@ let macro_lib =
 							| Some (VAbstract (ATDecl t)) ->
 								make_path t
 							| _ ->
-								let fields = List.fold_left (fun acc (fid,v) -> (field_name ctx fid, loop v) :: acc) [] (Array.to_list o.ofields) in
+								let fields = List.fold_left (fun acc (fid,v) -> (field_name ctx fid, loop v, []) :: acc) [] (Array.to_list o.ofields) in
 								(Ast.EObjectDecl fields, p))
 						| Some proto ->
 							match get_field_opt proto h_enum, get_field_opt o h_a, get_field_opt o h_s, get_field_opt o h_length with
@@ -3915,6 +3915,7 @@ and encode_expr e =
 			| EParenthesis e ->
 				4, [loop e]
 			| EObjectDecl fl ->
+				let fl = List.map( fun (n,e,m) -> (n,e)) fl in
 				5, [enc_array (List.map (fun (f,e) -> enc_obj [
 					"field",enc_string f;
 					"expr",loop e;
@@ -4204,9 +4205,12 @@ let rec decode_expr v =
 		| 4, [e] ->
 			EParenthesis (loop e)
 		| 5, [a] ->
-			EObjectDecl (List.map (fun o ->
+			let fl = (List.map (fun o ->
 				(dec_string (field o "field"), loop (field o "expr"))
 			) (dec_array a))
+			in
+			let fl = List.map( fun (n,e) -> (n,e,[])) fl in
+			EObjectDecl fl
 		| 6, [a] ->
 			EArrayDecl (List.map loop (dec_array a))
 		| 7, [e;el] ->
@@ -5045,7 +5049,7 @@ let rec make_ast e =
 	| TField (e,f) -> EField (make_ast e, Type.field_name f)
 	| TTypeExpr t -> fst (mk_path (full_type_path t) e.epos)
 	| TParenthesis e -> EParenthesis (make_ast e)
-	| TObjectDecl fl -> EObjectDecl (List.map (fun (f,e) -> f, make_ast e) fl)
+	| TObjectDecl fl -> EObjectDecl (List.map (fun (f,e) -> f, make_ast e,[]) fl)
 	| TArrayDecl el -> EArrayDecl (List.map make_ast el)
 	| TCall (e,el) -> ECall (make_ast e,List.map make_ast el)
 	| TNew (c,pl,el) -> ENew ((match (try make_type (TInst (c,pl)) with Exit -> make_type (TInst (c,[]))) with CTPath p -> p | _ -> assert false),List.map make_ast el)

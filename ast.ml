@@ -339,7 +339,7 @@ and expr_def =
 	| EBinop of binop * expr * expr
 	| EField of expr * string
 	| EParenthesis of expr
-	| EObjectDecl of (string * expr) list
+	| EObjectDecl of (string * expr * metadata) list
 	| EArrayDecl of expr list
 	| ECall of expr * expr list
 	| ENew of type_path * expr list
@@ -725,7 +725,7 @@ let map_expr loop (e,p) =
 	| EBinop (op,e1,e2) -> EBinop (op,loop e1, loop e2)
 	| EField (e,f) -> EField (loop e, f)
 	| EParenthesis e -> EParenthesis (loop e)
-	| EObjectDecl fl -> EObjectDecl (List.map (fun (f,e) -> f,loop e) fl)
+	| EObjectDecl fl -> EObjectDecl (List.map (fun (f,e,m) -> f,loop e,m) fl)
 	| EArrayDecl el -> EArrayDecl (List.map loop el)
 	| ECall (e,el) -> ECall (loop e, List.map loop el)
 	| ENew (t,el) -> ENew (tpath t,List.map loop el)
@@ -758,7 +758,7 @@ let rec s_expr (e,_) =
 	| EConst c -> s_constant c
 	| EParenthesis e -> "(" ^ (s_expr e) ^ ")"
 	| EArrayDecl el -> "[" ^ (String.concat "," (List.map s_expr el)) ^ "]"
-	| EObjectDecl fl -> "{" ^ (String.concat "," (List.map (fun (n,e) -> n ^ ":" ^ (s_expr e)) fl)) ^ "}"
+	| EObjectDecl fl -> "{" ^ (String.concat "," (List.map (fun (n,e,m) -> n ^ ":" ^ (s_expr e)) fl)) ^ "}"
 	| EBinop (op,e1,e2) -> s_expr e1 ^ s_binop op ^ s_expr e2
 	| ECall (e,el) -> s_expr e ^ "(" ^ (String.concat ", " (List.map s_expr el)) ^ ")"
 	| EField (e,f) -> s_expr e ^ "." ^ f
@@ -767,7 +767,7 @@ let rec s_expr (e,_) =
 let get_value_meta meta =
 	try
 		begin match Meta.get Meta.Value meta with
-			| (_,[EObjectDecl values,_],_) -> List.fold_left (fun acc (s,e) -> PMap.add s e acc) PMap.empty values
+			| (_,[EObjectDecl values,_],_) -> List.fold_left (fun acc (s,e,m) -> PMap.add s e acc) PMap.empty values
 			| _ -> raise Not_found
 		end
 	with Not_found ->
