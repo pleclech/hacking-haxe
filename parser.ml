@@ -1157,7 +1157,10 @@ and parse_obj_decl = parser
 				(match Stream.peek s with
 				| Some (Comma, _) -> (name, mk_eident name p) :: (parse_obj_decl s)
 				| Some (BrClose, _) -> [name, mk_eident name p]
-				| _ -> default s)
+				| _ ->
+					(match s with parser
+					| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
+					| [< >] -> []))
 			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
 			| [< >] -> [])
 		else
