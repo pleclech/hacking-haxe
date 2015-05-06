@@ -3885,6 +3885,18 @@ and handle_display ctx e_ast iscall p =
 		| TMono _ | TDynamic _ when ctx.in_macro -> mk (TConst TNull) t p
 		| _ -> raise (DisplayTypes [t]))
 
+and get_type_at ctx e pos =
+	let et = type_expr ctx e Value in
+	let t = match follow et.etype with
+	| TFun (tl, tret) ->
+		let l = List.length tl in
+		let pos = if pos < 0 then pos + l + 1 else pos in
+		if pos<0 || pos > l then None
+		else if pos=l then Some tret
+		else let _,_,t = (List.nth tl pos) in
+		Some t
+	| t -> if pos <> 0 then None else Some t
+	in et, t
 
 and type_call ctx e el (with_type:with_type) p =
 	let def () = (match e with
@@ -3933,6 +3945,24 @@ and type_call ctx e el (with_type:with_type) p =
 		let e = type_expr ctx e Value in
 		ctx.com.warning (s_type (print_context()) e.etype) e.epos;
 		e
+	| (EConst (Ident "$getTypeOf"), p1) , [e; (EConst (Int n), p2)] ->
+		let et, t = get_type_at ctx e (int_of_string n) in
+		(match t with
+		| None ->
+			display_error ctx ("No type at this position : "^n) p2;
+			et
+		| Some t ->
+			{et with etype=t})
+	| (EConst (Ident "$setTypeOf"), p1) , [e; e2] ->
+		let et = type_expr ctx e Value in
+		(match follow et.etype with
+		| TMono r when !r=None ->
+			let et = type_expr ctx e2 Value in
+			let t = et.etype in
+			if ctx.com.verbose then ctx.com.warning ("Changing type to : " ^ (s_type (print_context()) t)) (pos e);
+			r := Some t
+		| _ -> display_error ctx ("The expression is already typed as "^(s_type (print_context()) et.etype)) p1);
+		et
 	| (EField(e,"match"),p), [epat] ->
 		let et = type_expr ctx e Value in
 		(match follow et.etype with
