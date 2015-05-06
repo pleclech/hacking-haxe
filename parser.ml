@@ -609,6 +609,7 @@ and parse_type_decl s =
 				d_data = l
 			}, punion p1 p2)
 		| [< n , p1 = parse_class_flags; name = type_name; tl = parse_constraint_params; hl = plist parse_class_herit; '(BrOpen,_); fl, p2 = parse_class_fields false p1 >] ->
+			to_pseudo_private name fl;
 			(EClass {
 				d_name = name;
 				d_doc = doc;

@@ -881,7 +881,7 @@ let check_overriding ctx c =
 				| _ -> ());
 				if ctx.com.config.pf_overload && (Meta.has Meta.Overload f2.cf_meta && not (Meta.has Meta.Overload f.cf_meta)) then
 					display_error ctx ("Field " ^ i ^ " should be declared with @:overload since it was already declared as @:overload in superclass") p
-				else if not (List.memq f c.cl_overrides) then
+				else if not (Meta.has Meta.Private f.cf_meta) && not (List.memq f c.cl_overrides) then
 					display_error ctx ("Field " ^ i ^ " should be declared with 'override' since it is inherited from superclass " ^ Ast.s_type_path csup.cl_path) p
 				else if not f.cf_public && f2.cf_public then
 					display_error ctx ("Field " ^ i ^ " has less visibility (public/private) than superclass one") p
@@ -2025,7 +2025,7 @@ let init_class ctx c p context_init herits fields =
 				| None -> ()
 				| Some (csup,_) ->
 					(* this can happen on -net-lib generated classes if a combination of explicit interfaces and variables with the same name happens *)
-					if not (csup.cl_interface && Meta.has Meta.CsNative c.cl_meta) then
+					if not (csup.cl_interface && Meta.has Meta.CsNative c.cl_meta) && not (has_meta Meta.Private cf.cf_meta) then
 						error ("Redefinition of variable " ^ cf.cf_name ^ " in subclass is not allowed. Previously declared at " ^ (Ast.s_type_path csup.cl_path) ) p
 		end;
 		let t = cf.cf_type in

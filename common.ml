@@ -464,6 +464,7 @@ module MetaInfo = struct
 		| Public -> ":public",("Marks a class field as being public",[UsedOn TClassField])
 		| PublicFields -> ":publicFields",("Forces all class fields of inheriting classes to be public",[UsedOn TClass])
 		| QuotedField -> ":quotedField",("Used internally to mark structure fields which are quoted in syntax",[Internal])
+		| Private -> ":private",("Marks a class field as being pseudo private",[UsedOn TClassField])
 		| PrivateAccess -> ":privateAccess",("Allow private access to anything for the annotated expression",[UsedOn TExpr])
 		| Protected -> ":protected",("Marks a class field as being protected",[UsedOn TClassField])
 		| Property -> ":property",("Marks a property field to be compiled as a native C# property",[UsedOn TClassField;Platform Cs])

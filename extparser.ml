@@ -55,4 +55,11 @@ let mk_type_inf pack =
 	mk_type pack "Dynamic" ([TPType(CTPath {tpackage=[];tname="_";tparams=[];tsub=None;})]) None
 
 
-
+let to_pseudo_private cn fl =
+	let tfr_field cf =
+		if Meta.has Meta.Private cf.cff_meta then begin
+			let ac = APrivate::(List.filter(fun c -> (c<>APrivate)&&(c<>APublic)) cf.cff_access) in
+			cf.cff_access <- ac;
+			cf.cff_meta <- (Meta.Native, [mk_estring ("_"^(String.lowercase cn)^"_"^cf.cff_name) cf.cff_pos], cf.cff_pos)::cf.cff_meta;
+		end
+	in List.iter tfr_field fl;

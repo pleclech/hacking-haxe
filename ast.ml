@@ -134,6 +134,7 @@ module Meta = struct
 		| Op
 		| Optional
 		| Overload
+		| Private
 		| PrivateAccess
 		| Property
 		| Protected
