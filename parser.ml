@@ -1096,9 +1096,7 @@ and block1 = parser
 	| [< b = block [] >] -> EBlock b
 
 and block2 name ident p s =
-	match s with parser
-	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e) :: l)
-	| [< >] ->
+	let default s =
 		let e = expr_next (EConst ident,p) s in
 		try
 			let _ = semicolon s in
@@ -1108,6 +1106,20 @@ and block2 name ident p s =
 			| Error (err,p) ->
 				(!display_error) err p;
 				EBlock (block [e] s)
+	in
+	match s with parser
+	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e) :: l)
+	| [< >] ->
+		if !use_extended_syntax then
+			match ident with
+			| Ident _ ->
+				(match Stream.peek s with
+				| Some(Comma, _) ->
+					let e = EConst ident,p in
+					EObjectDecl ((name,e) :: (parse_obj_decl s))
+				| _ -> default s)
+			| _ -> default s
+		else default s
 
 and block acc s =
 	try
@@ -1133,10 +1145,23 @@ and parse_block_elt = parser
 
 and parse_obj_decl = parser
 	| [< '(Comma,_); s >] ->
-		(match s with parser
-		| [< name, _ = ident; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
-		| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
-		| [< >] -> [])
+		let default s =
+			(match s with parser
+			| [< name, _ = ident; '(DblDot,_); e = expr; l = parse_obj_decl >] -> (name,e) :: l
+			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
+			| [< >] -> [])
+		in
+		if !use_extended_syntax then
+			(match s with parser
+			| [< name, p = ident; s >] ->
+				(match Stream.peek s with
+				| Some (Comma, _) -> (name, mk_eident name p) :: (parse_obj_decl s)
+				| Some (BrClose, _) -> [name, mk_eident name p]
+				| _ -> default s)
+			| [< '(Const (String name),_); '(DblDot,_); e = expr; l = parse_obj_decl >] -> (quote_ident name,e) :: l
+			| [< >] -> [])
+		else
+			default s
 	| [< >] -> []
 
 and parse_array_decl = parser
