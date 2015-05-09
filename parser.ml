@@ -1281,7 +1281,8 @@ and parse_for_init s =
 			in e, efor
 	else (expr s), true
 
-and expr = parser
+and expr s =
+	let hx s = match s with parser
 	| [< (name,params,p) = parse_meta_entry; s >] ->
 		(try
 			make_meta name params (secure_expr s) p
@@ -1422,6 +1423,8 @@ and expr = parser
 	| [< '(IntInterval i,p1); e2 = expr >] -> make_binop OpInterval (EConst (Int i),p1) e2
 	| [< '(Kwd Untyped,p1); e = expr >] -> (EUntyped e,punion p1 (pos e))
 	| [< '(Dollar v,p); s >] -> expr_next (EConst (Ident ("$"^v)),p) s
+	in
+	dequeue_expr hx s
 
 and expr_next e1 = parser
 	| [< '(BrOpen,p1) when is_dollar_ident e1; eparam = expr; '(BrClose,p2); s >] ->
@@ -1734,6 +1737,7 @@ let parse ctx code =
 		DynArray.add (!cache) t;
 		Some t
 	) in
+	let s = token_stream s in
 	try
 		let l = parse_file s in
 		(match !mstack with p :: _ when not (do_resume()) -> error Unclosed_macro p | _ -> ());
