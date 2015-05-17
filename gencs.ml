@@ -3746,7 +3746,7 @@ let convert_ilmethod ctx p m is_explicit_impl =
 		) m.mtypes in
 		FFun {
 			f_params = types;
-			f_args = args;
+			f_args = List.map(fun (n,o,eo,x) -> (n,o,eo,x,[])) args;
 			f_type = Some ret;
 			f_expr = None;
 		}
@@ -3920,7 +3920,7 @@ let convert_delegate ctx p ilcls =
 		let expr = (ECall( (EField( (EConst(Ident (clsname)),p), fn_name ),p), [(EConst(Ident"arg1"),p);(EConst(Ident"arg2"),p)]),p) in
 		FFun {
 			f_params = types;
-			f_args = ["arg1",false,Some abs_type,None;"arg2",false,Some abs_type,None];
+			f_args = ["arg1",false,Some abs_type,None,[];"arg2",false,Some abs_type,None,[]];
 			f_type = Some abs_type;
 			f_expr = Some ( (EReturn (Some expr), p) );
 		}
@@ -3946,13 +3946,13 @@ let convert_delegate ctx p ilcls =
 
 	let fn_new = FFun {
 		f_params = [];
-		f_args = ["hxfunc",false,Some haxe_type,None];
+		f_args = ["hxfunc",false,Some haxe_type,None,[]];
 		f_type = None;
 		f_expr = Some ( EBinop(Ast.OpAssign, (EConst(Ident "this"),p), (mk_special_call "__delegate__" p [EConst(Ident "hxfunc"),p]) ), p );
 	} in
 	let fn_from_hx = FFun {
 		f_params = types;
-		f_args = ["hxfunc",false,Some haxe_type,None];
+		f_args = ["hxfunc",false,Some haxe_type,None,[]];
 		f_type = Some( mk_type_path ctx ilcls.cpath params );
 		f_expr = Some( EReturn( Some (mk_special_call "__delegate__" p [EConst(Ident "hxfunc"),p] )), p);
 	} in
@@ -3962,7 +3962,7 @@ let convert_delegate ctx p ilcls =
 		f_params = [];
 		f_args = List.map (fun arg ->
 			incr i;
-			"arg" ^ string_of_int !i, false, Some (convert_fun_arg ctx p arg), None
+			"arg" ^ string_of_int !i, false, Some (convert_fun_arg ctx p arg), None, []
 		) args;
 		f_type = Some(convert_signature ctx p ret);
 		f_expr = Some(
@@ -4107,7 +4107,7 @@ let convert_ilclass ctx p ?(delegate=false) ilcls = match ilcls.csuper with
 						cff_access = [APublic;AStatic];
 						cff_kind = FFun {
 							f_params = params;
-							f_args = ["arg1",false,Some thist,None;"arg2",false,Some thist,None];
+							f_args = ["arg1",false,Some thist,None,[];"arg2",false,Some thist,None,[]];
 							f_type = Some thist;
 							f_expr = None;
 						};

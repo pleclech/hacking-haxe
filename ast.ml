@@ -35,6 +35,8 @@ module Meta = struct
 		| Access
 		| Accessor
 		| Allow
+		| AllowInitInCC
+		| AllowWrite
 		| Analyzer
 		| Annotation
 		| ArrayAccess
@@ -50,6 +52,7 @@ module Meta = struct
 		| ClassCode
 		| Commutative
 		| CompilerGenerated
+		| Const
 		| CoreApi
 		| CoreType
 		| CppFileCode
@@ -132,6 +135,7 @@ module Meta = struct
 		| Op
 		| Optional
 		| Overload
+		| Private
 		| PrivateAccess
 		| Property
 		| Protected
@@ -190,6 +194,8 @@ type keyword =
 	| Function
 	| Class
 	| Var
+	| Val | KConst
+	| Def
 	| If
 	| Else
 	| While
@@ -293,6 +299,7 @@ type token =
 	| Question
 	| At
 	| Dollar of string
+	| QIdent of string
 
 type unop_flag =
 	| Prefix
@@ -323,7 +330,7 @@ and complex_type =
 
 and func = {
 	f_params : type_param list;
-	f_args : (string * bool * complex_type option * expr option) list;
+	f_args : (string * bool * complex_type option * expr option * metadata) list;
 	f_type : complex_type option;
 	f_expr : expr option;
 }
@@ -334,12 +341,12 @@ and expr_def =
 	| EBinop of binop * expr * expr
 	| EField of expr * string
 	| EParenthesis of expr
-	| EObjectDecl of (string * expr) list
+	| EObjectDecl of (string * expr * metadata) list
 	| EArrayDecl of expr list
 	| ECall of expr * expr list
 	| ENew of type_path * expr list
 	| EUnop of unop * unop_flag * expr
-	| EVars of (string * complex_type option * expr option) list
+	| EVars of (string * complex_type option * expr option * metadata) list
 	| EFunction of string option * func
 	| EBlock of expr list
 	| EFor of expr * expr
@@ -531,6 +538,9 @@ let s_keyword = function
 	| Class -> "class"
 	| Static -> "static"
 	| Var -> "var"
+	| Val -> "val"
+	| KConst  -> "const"
+	| Def -> "def"
 	| If -> "if"
 	| Else -> "else"
 	| While -> "while"
@@ -626,6 +636,7 @@ let s_token = function
 	| Question -> "?"
 	| At -> "@"
 	| Dollar v -> "$" ^ v
+	| QIdent v -> "`" ^ v
 
 let unescape s =
 	let b = Buffer.create 0 in
@@ -705,7 +716,7 @@ let map_expr loop (e,p) =
 	and func f =
 		{
 			f_params = List.map tparamdecl f.f_params;
-			f_args = List.map (fun (n,o,t,e) -> n,o,opt ctype t,opt loop e) f.f_args;
+			f_args = List.map (fun (n,o,t,e,m) -> n,o,opt ctype t,opt loop e,m) f.f_args;
 			f_type = opt ctype f.f_type;
 			f_expr = opt loop f.f_expr;
 		}
@@ -717,12 +728,12 @@ let map_expr loop (e,p) =
 	| EBinop (op,e1,e2) -> EBinop (op,loop e1, loop e2)
 	| EField (e,f) -> EField (loop e, f)
 	| EParenthesis e -> EParenthesis (loop e)
-	| EObjectDecl fl -> EObjectDecl (List.map (fun (f,e) -> f,loop e) fl)
+	| EObjectDecl fl -> EObjectDecl (List.map (fun (f,e,m) -> f,loop e,m) fl)
 	| EArrayDecl el -> EArrayDecl (List.map loop el)
 	| ECall (e,el) -> ECall (loop e, List.map loop el)
 	| ENew (t,el) -> ENew (tpath t,List.map loop el)
 	| EUnop (op,f,e) -> EUnop (op,f,loop e)
-	| EVars vl -> EVars (List.map (fun (n,t,eo) -> n,opt ctype t,opt loop eo) vl)
+	| EVars vl -> EVars (List.map (fun (n,t,eo,m) -> n,opt ctype t,opt loop eo,m) vl)
 	| EFunction (n,f) -> EFunction (n,func f)
 	| EBlock el -> EBlock (List.map loop el)
 	| EFor (e1,e2) -> EFor (loop e1, loop e2)
@@ -750,7 +761,7 @@ let rec s_expr (e,_) =
 	| EConst c -> s_constant c
 	| EParenthesis e -> "(" ^ (s_expr e) ^ ")"
 	| EArrayDecl el -> "[" ^ (String.concat "," (List.map s_expr el)) ^ "]"
-	| EObjectDecl fl -> "{" ^ (String.concat "," (List.map (fun (n,e) -> n ^ ":" ^ (s_expr e)) fl)) ^ "}"
+	| EObjectDecl fl -> "{" ^ (String.concat "," (List.map (fun (n,e,m) -> n ^ ":" ^ (s_expr e)) fl)) ^ "}"
 	| EBinop (op,e1,e2) -> s_expr e1 ^ s_binop op ^ s_expr e2
 	| ECall (e,el) -> s_expr e ^ "(" ^ (String.concat ", " (List.map s_expr el)) ^ ")"
 	| EField (e,f) -> s_expr e ^ "." ^ f
@@ -759,7 +770,7 @@ let rec s_expr (e,_) =
 let get_value_meta meta =
 	try
 		begin match Meta.get Meta.Value meta with
-			| (_,[EObjectDecl values,_],_) -> List.fold_left (fun acc (s,e) -> PMap.add s e acc) PMap.empty values
+			| (_,[EObjectDecl values,_],_) -> List.fold_left (fun acc (s,e,m) -> PMap.add s e acc) PMap.empty values
 			| _ -> raise Not_found
 		end
 	with Not_found ->

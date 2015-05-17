@@ -317,8 +317,8 @@ let save_locals ctx =
 	let locals = ctx.locals in
 	(fun() -> ctx.locals <- locals)
 
-let add_local ctx n t =
-	let v = alloc_var n t in
+let add_local ?(meta=[]) ctx n t =
+	let v = alloc_var ~meta:meta n t in
 	ctx.locals <- PMap.add n v ctx.locals;
 	v
 
