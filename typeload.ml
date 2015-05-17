@@ -2073,6 +2073,9 @@ let init_class ctx c p context_init herits fields =
 						let e = match Optimizer.make_constant_expression ctx e with
 							| Some e -> e
 							| None ->
+								if has_meta Meta.AllowInitInCC cf.cf_meta then
+									e
+								else
 								let rec has_this e = match e.eexpr with
 									| TConst TThis ->
 										display_error ctx "Cannot access this or other member field in variable initialization" e.epos;

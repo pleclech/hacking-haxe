@@ -35,6 +35,7 @@ module Meta = struct
 		| Access
 		| Accessor
 		| Allow
+		| AllowInitInCC
 		| AllowWrite
 		| Analyzer
 		| Annotation
@@ -194,6 +195,7 @@ type keyword =
 	| Class
 	| Var
 	| Val | KConst
+	| Def
 	| If
 	| Else
 	| While
@@ -538,6 +540,7 @@ let s_keyword = function
 	| Var -> "var"
 	| Val -> "val"
 	| KConst  -> "const"
+	| Def -> "def"
 	| If -> "if"
 	| Else -> "else"
 	| While -> "while"
