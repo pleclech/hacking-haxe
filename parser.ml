@@ -1540,6 +1540,7 @@ and expr_next e1 = parser
 		| [< '(Kwd New,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"new") , punion (pos e1) p2) s
 		| [< '(Kwd Val,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"val") , punion (pos e1) p2) s
 		| [< '(Kwd KConst,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"const") , punion (pos e1) p2) s
+		| [< '(Kwd Def,p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,"def") , punion (pos e1) p2) s
 		| [< '(Const (Ident f),p2) when p.pmax = p2.pmin; s >] -> expr_next (EField (e1,f) , punion (pos e1) p2) s
 		| [< '(Dollar v,p2); s >] -> expr_next (EField (e1,"$"^v) , punion (pos e1) p2) s
 		| [< '(Binop OpOr,p2) when do_resume() >] ->
