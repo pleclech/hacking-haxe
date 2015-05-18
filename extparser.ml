@@ -1,5 +1,7 @@
 open Ast
 
+exception Display of expr
+
 let use_extended_syntax = ref false
 
 type token_stream = (token*pos) Stream.t
@@ -23,6 +25,9 @@ let parse_fun_param_value_ref:(token_stream -> expr option) ref = ref (fun _ -> 
 let parse_class_fields_ref:(bool -> pos -> token_stream -> class_field list*pos) ref = ref ( fun _ _ _ -> assert false)
 let make_binop_ref:(binop -> expr -> expr -> expr)  ref = ref (fun _ _ _ -> assert false)
 let parse_call_params_ref:(expr -> token_stream -> expr list) ref = ref (fun _ _ -> assert false)
+let expr_ref:(token_stream -> expr) ref = ref (fun _ -> assert false)
+let toplevel_expr_ref:(token_stream -> expr) ref = ref (fun _ -> assert false)
+let display_ref:(expr -> expr) ref = ref (fun _ -> assert false)
 
 let mk_efield e n p = EField (e, n), p
 let mk_eblock b p = EBlock b, p
@@ -129,7 +134,7 @@ type class_constructor_t = {
 	cc_args:class_constructor_arg_t list;
 	cc_symbols:symbols_t;
 	cc_code:expr Queue.t;
-	cc_super:expr option;
+	cc_constraints:type_param list;
 }
 
 type ext_state_t = {
@@ -344,34 +349,52 @@ let parse_cc_param_opt_modifier = parser
 	| [< '(Kwd Val, _) >] -> false, false
 	| [< >] -> true, false
 
-let update_cfs class_name cp cc fl p1 p2 = match cc with
+let mk_cff_fun fun_name meta ac cp args body p1 p2 =
+	let f =
+	{
+		f_params = cp;
+		f_args = args;
+		f_type = None;
+		f_expr = Some(body, p2);
+	} 
+	in
+	{
+		cff_name = fun_name;
+		cff_doc = None;
+		cff_meta = meta;
+		cff_access = ac;
+		cff_pos = punion p1 p2;
+		cff_kind = FFun f;
+	}
+
+
+let mk_cc_fun ?(is_inlined=false) fun_name cc p1 p2 =
+	let mk_arg = function
+		| {cca_arg=(_, _, (n, b, ot, oe)); _} -> (n,b,ot,oe,[])
+	in
+	let init = List.rev (Queue.fold (fun a e -> e::a) [] cc.cc_code) in
+	let args = List.map mk_arg cc.cc_args in
+	let al = if is_inlined then AInline::cc.cc_al else cc.cc_al in
+	mk_cff_fun fun_name cc.cc_meta al cc.cc_constraints args (EBlock init) p1 p2
+
+let mk_cc_f p cc =
+	let mk_arg = function
+		| {cca_arg=(_, _, (n, b, ot, oe)); _} -> (n,b,ot,oe,[])
+	in
+	let init = List.rev (Queue.fold (fun a e -> e::a) [] cc.cc_code) in
+	let args = List.map mk_arg cc.cc_args in
+	{
+		f_params = cc.cc_constraints;
+		f_args = args;
+		f_type = None;
+		f_expr = Some (EBlock init, p);
+	}
+
+
+let update_cfs class_name occ fl p1 p2 = match occ with
 	| Some cc ->
 		if not (List.exists (fun cf -> match cf with {cff_name="new"; cff_kind=FFun _; _} -> true | _ -> false) fl) then begin
-			let mk_new ac cp args body = 
-				let f =  
-					{
-						f_params = cp;
-						f_args = args;
-						f_type = None;
-						f_expr = Some(body, p2);
-					} 
-				in
-					{
-						cff_name = "new";
-						cff_doc = None;
-						cff_meta = cc.cc_meta;
-						cff_access = ac;
-						cff_pos = punion p1 p2;
-						cff_kind = FFun f;
-					}
-			in
-			let mk_arg = function
-				| {cca_arg=(_, _, (n, b, ot, oe)); _} -> (n,b,ot,oe,[])
-			in
-			let init = List.rev (Queue.fold (fun a e -> e::a) [] cc.cc_code) in
-			let args = List.map mk_arg cc.cc_args in
-			let fn = mk_new cc.cc_al cp args (EBlock init) in
-			fn::fl
+			(mk_cc_fun "new" cc p1 p2)::fl
 		end else
 			fl
 	| _ -> fl
@@ -515,7 +538,7 @@ let parse_cc_param_with_ac meta ac (il, im) s =
 let parse_cc_param = parser
 	| [< meta=(!parse_meta_ref); ac=parse_cc_param_opt_access; m=parse_cc_param_opt_modifier; s >] -> parse_cc_param_with_ac meta ac m s
 
-let parse_class_constructor class_name s =
+let parse_class_constructor class_name cp s =
 	let cc =
 		if !use_extended_syntax then begin
 			match s with parser
@@ -528,7 +551,7 @@ let parse_class_constructor class_name s =
 						ext_symbols := ss;
 						(match s with parser
 						| [< arl=psep Comma parse_cc_param; '(PClose,o2) >] ->
-							Some {cc_meta=meta; cc_al=acl; cc_args=arl; cc_symbols=ss; cc_code=(!ext_init_code); cc_super=None; })
+							Some {cc_meta=meta; cc_al=acl; cc_args=arl; cc_symbols=ss; cc_code=(!ext_init_code); cc_constraints=cp; })
 					| [< >] -> None
 			| [< >] -> None
 		end else None
@@ -536,17 +559,23 @@ let parse_class_constructor class_name s =
 	push_cc cc;
 	cc
 
-let insert_exprs_in_cc el =
+let insert_cc_expr cc e = Queue.push e cc.cc_code
+
+let with_cc_do f =
 	match (!ext_state).es_cc with
-	| (Some cc)::xs ->
+	| (Some cc)::xs -> Some (f cc)
+	| _ -> None
+
+let insert_exprs_in_cc el =
+	let f cc =
 		let q = cc.cc_code in
 		List.iter (fun e -> Queue.push e q) el
-	| _ -> ()
+	in with_cc_do f
 
 let mk_init_field n e p =
 	if !use_extended_syntax then
-		let e = mk_eassign (mk_eident n p) e
-		in insert_exprs_in_cc [e]
+		let e = mk_eassign (mk_eident n p) e in 
+		let _ = insert_exprs_in_cc [e] in ()
 
 let mk_delayed_init is_cc name e t p =
 	if is_cc then begin
@@ -556,9 +585,23 @@ let mk_delayed_init is_cc name e t p =
 		None, type_or_infer t, p
 	end else e, t, p
 
-let parse_cc_code meta failed s =
+let dummy_cf = "",null_pos, FVar (None, None),[],None
+
+let parse_cc_code failed semicolon s =
 	if !use_extended_syntax then
-		failed()
+		try
+			match s with parser
+			| [< e = (!expr_ref); s >] ->
+				semicolon s;
+				let _ = insert_exprs_in_cc [e] in
+				dummy_cf
+			| [< '(Semicolon,p) >] -> dummy_cf
+			| [< >] -> failed()
+		with Display e ->
+			let _ = insert_exprs_in_cc [e] in
+			match with_cc_do (mk_cc_f (pos e)) with
+			| None -> dummy_cf
+			| Some f -> "new", pos e, FFun f, [], None
 	else
 		failed()
 
@@ -573,9 +616,12 @@ let parse_cc_extends occ s =
 					| [< params = (!parse_call_params_ref) super; '(PClose,p2) >] ->
 						let super_call = ECall (super, params), punion p1 p2 in
 						(*cc.cc_super = Some (ECall (super, params), punion p1 p2)*)
-						Queue.push super_call cc.cc_code
+						insert_cc_expr cc super_call
 				in ()
 			| [< >] -> ())
 		| _ -> ()
 	end;
 	()
+
+let filter_class_fields fl =
+	List.filter (fun cf -> match cf with {cff_name=""; _} -> false | _ -> true) fl
