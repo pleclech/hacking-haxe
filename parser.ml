@@ -1105,7 +1105,7 @@ and parse_class_field s =
 							f_type = t;
 							f_expr = e;
 						} in
-						insert_exprs_in_cc ooe;
+						let _ = insert_exprs_in_cc ooe in
 						name, punion p1 p2, FFun f, meta, None
 				| [< >] -> hx s
 			else
@@ -1191,14 +1191,20 @@ and block1 s =
 		match s with parser
 		| [< name,p = dollar_ident; s >] -> block2 ~meta:meta name (Ident name) p s
 		| [< '(Const (String name),p); s >] -> block2 ~meta:meta (quote_ident name) (String name) p s
-		| [< b = block [] >] -> EBlock b
+		| [< b = block ~meta:meta [] >] -> EBlock b
 	else
 		match s with parser
-		| [< b = block [] >] -> EBlock b
+		| [< b = block ~meta:meta [] >] -> EBlock b
 
 and block2 ?(meta=[]) name ident p s =
+	let metaify e =
+		let rec loop e = function
+		| (name, params, p)::ms -> loop (make_meta name params e p) ms
+		| [] -> e
+		in loop e meta
+	in
 	let default s =
-		let e = expr_next (EConst ident,p) s in
+		let e = metaify(expr_next (EConst ident,p) s) in
 		try
 			let _ = semicolon s in
 			let b = block [e] s in
@@ -1222,10 +1228,16 @@ and block2 ?(meta=[]) name ident p s =
 			| _ -> default s
 		else default s
 
-and block acc s =
+and block ?(meta=[]) acc s =
 	try
 		(* because of inner recursion, we can't put Display handling in errors below *)
-		let e = try parse_block_elt s with Display e -> display (EBlock (List.rev (e :: acc)),snd e) in
+		let metaify e =
+			let rec loop e = function
+			| (name, params, p)::ms -> loop (make_meta name params e p) ms
+			| [] -> e
+			in loop e meta
+		in
+		let e = try metaify (parse_block_elt s) with Display e -> display (EBlock (List.rev ((metaify e) :: acc)),snd e) in
 		block (e :: acc) s
 	with
 		| Stream.Failure ->
@@ -1397,7 +1409,11 @@ and expr s =
 		| EObjectDecl _ -> expr_next e s
 		| _ -> e)
 	| [< '(Kwd Macro,p); s >] ->
-		parse_macro_expr p s
+		let ues = !use_extended_syntax in
+		use_extended_syntax := false;
+		let e = parse_macro_expr p s in
+		use_extended_syntax := ues;
+		e
 	| [< '(Kwd Var,p1); v = parse_var_decl >] -> declared_in_expr (EVars [v],p1)
 	| [< e = parse_const_expr >] -> declared_in_expr e
 	| [< '(Const c,p); s >] -> expr_next (use_expr (EConst c,p)) s
