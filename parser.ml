@@ -34,7 +34,6 @@ type error_msg =
 
 exception Error of error_msg * pos
 exception TypePath of string list * (string * bool) option * bool (* in import *)
-exception Display of expr
 
 let error_msg = function
 	| Unexpected t -> "Unexpected "^(s_token t)
@@ -609,8 +608,8 @@ and parse_type_decl s =
 				d_flags = List.map snd c @ n;
 				d_data = l
 			}, punion p1 p2)
-		| [< n , p1 = parse_class_flags; name = type_name; tl = parse_constraint_params; cc=parse_class_constructor name; hl = plist (parse_class_herit ~cc:cc); fl, p2 = parse_opt_class_body p1 name >] ->
-			let fl = update_cfs name [] cc fl p1 p2 in
+		| [< n , p1 = parse_class_flags; name = type_name; tl = parse_constraint_params; cc=parse_class_constructor name tl; hl = plist (parse_class_herit ~cc:cc); fl, p2 = parse_opt_class_body p1 name >] ->
+			let fl = update_cfs name cc fl p1 p2 in
 			to_pseudo_private name fl;
 			pop_cc();
 			(EClass {
@@ -713,7 +712,7 @@ and parse_class_fields tdecl p1 s =
 		| [< '(BrClose,p2) >] -> p2
 		| [< >] -> if do_resume() then p1 else serror()
 	) in
-	l, p2
+	filter_class_fields l, p2
 
 and parse_class_field_resume tdecl s =
 	if not (do_resume()) then
@@ -1052,7 +1051,9 @@ and parse_class_field s =
 					let fail() = raise Stream.Failure in
 					if al = [] then
 						if is_cc then
-							parse_cc_code meta fail s
+							let semicolon s = (try ignore(semicolon s) with Error (Missing_semicolon,p) -> !display_error Missing_semicolon p)
+							in
+							parse_cc_code fail semicolon s
 						else
 							fail()
 					else
@@ -1872,3 +1873,6 @@ parse_fun_param_value_ref := parse_fun_param_value;
 parse_class_fields_ref := parse_class_fields;
 make_binop_ref := make_binop;
 parse_call_params_ref := parse_call_params;
+expr_ref := expr;
+toplevel_expr_ref := toplevel_expr;
+display_ref := display;
