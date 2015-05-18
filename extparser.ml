@@ -368,23 +368,25 @@ let mk_cff_fun fun_name meta ac cp args body p1 p2 =
 	}
 
 
-let mk_cc_fun ?(is_inlined=false) fun_name cc p1 p2 =
+let mk_cc_fun ?(is_inlined=false) ?(ignore_cp=false) fun_name cc p1 p2 =
 	let mk_arg = function
 		| {cca_arg=(_, _, (n, b, ot, oe)); _} -> (n,b,ot,oe,[])
 	in
 	let init = List.rev (Queue.fold (fun a e -> e::a) [] cc.cc_code) in
 	let args = List.map mk_arg cc.cc_args in
 	let al = if is_inlined then AInline::cc.cc_al else cc.cc_al in
-	mk_cff_fun fun_name cc.cc_meta al cc.cc_constraints args (EBlock init) p1 p2
+	let cp = if ignore_cp then [] else cc.cc_constraints in
+	mk_cff_fun fun_name cc.cc_meta al cp args (EBlock init) p1 p2
 
-let mk_cc_f p cc =
+let mk_cc_f ?(ignore_cp=false) p cc =
 	let mk_arg = function
 		| {cca_arg=(_, _, (n, b, ot, oe)); _} -> (n,b,ot,oe,[])
 	in
 	let init = List.rev (Queue.fold (fun a e -> e::a) [] cc.cc_code) in
 	let args = List.map mk_arg cc.cc_args in
+	let cp = if ignore_cp then [] else cc.cc_constraints in
 	{
-		f_params = cc.cc_constraints;
+		f_params = cp;
 		f_args = args;
 		f_type = None;
 		f_expr = Some (EBlock init, p);
@@ -394,7 +396,7 @@ let mk_cc_f p cc =
 let update_cfs class_name occ fl p1 p2 = match occ with
 	| Some cc ->
 		if not (List.exists (fun cf -> match cf with {cff_name="new"; cff_kind=FFun _; _} -> true | _ -> false) fl) then begin
-			(mk_cc_fun "new" cc p1 p2)::fl
+			(mk_cc_fun ~ignore_cp:true "new" cc p1 p2)::fl
 		end else
 			fl
 	| _ -> fl
@@ -599,7 +601,7 @@ let parse_cc_code failed semicolon s =
 			| [< >] -> failed()
 		with Display e ->
 			let _ = insert_exprs_in_cc [e] in
-			match with_cc_do (mk_cc_f (pos e)) with
+			match with_cc_do (mk_cc_f ~ignore_cp:true (pos e)) with
 			| None -> dummy_cf
 			| Some f -> "new", pos e, FFun f, [], None
 	else
