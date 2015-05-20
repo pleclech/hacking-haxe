@@ -150,16 +150,24 @@ type ext_state_t = {
 	mutable es_cfs:class_field Queue.t;
 	mutable es_cc:class_constructor_t option list;
 	mutable es_flags:int list;
+	mutable es_uid:int;
 }
 
 let ext_current_flag = ref 0
-let empty_ext_state() = {es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; }
+let empty_ext_state() = {es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; es_uid=0; }
 
 let ext_states = ref []
 
 let ext_state = ref (empty_ext_state())
 
 let ext_init_code = ref (Queue.create())
+
+let new_uid() =
+	let id = (!ext_state).es_uid + 1 in
+	(!ext_state).es_uid <- id;
+	id
+
+let fresh_name pfx = pfx^(string_of_int (new_uid()))
 
 let is_flag_set f fs = (fs land f) <> 0
 let set_flag f fs = fs lor f
@@ -671,9 +679,10 @@ let create_tuple ctx arity =
 	let s_args ?(sfx="") n = String.concat "," (mk_args ~sfx:sfx n arity) in
 	let params = s_args "T" in
 	let args = s_args ~sfx:":T" "val _" in
-	let s = Printf.sprintf "@:generic @:final class %s<%s> inline (%s) extends Tuple(%d) {\n" cn params args arity in
+	let s = Printf.sprintf "@:generic @:final class %s<%s> inline (%s) implements Tuple {\n" cn params args in
 	let body = ref [] in
-	body := (Printf.sprintf "public def toString()='(%s)';" (s_args "$_"))::!body;
+	body := (Printf.sprintf "public val arity=%d;" arity)::!body;
+	body := (Printf.sprintf "inline public def toString()='(%s)';" (s_args "$_"))::!body;
 	body := (Printf.sprintf "inline public def toArray():Array<Dynamic>=[%s];" (s_args "_"))::!body;
 	let s = s^(String.concat "\n" !body)^"\n}" in
 	let f = Printf.sprintf "%s.ehx" cn in
@@ -776,7 +785,15 @@ let tuple_or_ecall e params p custom_error s =
 				let fl = List.map (from_expr m) params in
 				let fl = List.filter(fun (n,_,_,_) -> n<>"") fl in
 				(match (!parse_var_assignment_ref) s with
-				| Some(ae) ->
+				| Some(ae) as sae ->
+					let blk = ref [] in
+					let ae = match ae with
+						| EConst (Ident _), p -> ae
+						| _, p ->
+							let vn = fresh_name "__td" in
+							blk := (EVars [vn, None, sae, m], p)::!blk;
+							mk_eident vn p
+					in
 					let pae = pos ae in
 					let vl = List.map (fun (n,t,i,m) ->
 						let ef = EField (ae, ("_" ^ (string_of_int i))) in
@@ -784,7 +801,11 @@ let tuple_or_ecall e params p custom_error s =
 						n,t,ae,m
 					) fl
 					in
-					EVars vl, punion pe (pos ae)
+					let bpe = punion pe (pos ae) in
+					let evars = (EVars vl, bpe) in
+					(match !blk with
+					| [] -> evars
+					| blk -> EMeta((Meta.MergeBlock, [], bpe), (EBlock (List.rev (evars::blk)), bpe)), bpe)
 				| _ ->
 					let _ = custom_error "Assignment required for tuple extractor" pe in
 					EVars [], null_pos
