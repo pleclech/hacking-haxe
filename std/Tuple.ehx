@@ -1,0 +1,1 @@
+class Tuple inline (val arity:Int);

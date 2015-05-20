@@ -45,6 +45,9 @@ let error_msg = function
 	| Custom s -> s
 
 let error m p = raise (Error (m,p))
+
+let custom_error s p = error (Custom s) p
+
 let display_error : (error_msg -> pos -> unit) ref = ref (fun _ _ -> assert false)
 
 let quoted_ident_prefix = "@$__hx__"
@@ -892,6 +895,7 @@ and parse_type_path1 pack = parser
 						| [< '(Binop OpLt,_); l = psep Comma parse_type_path_or_const; '(Binop OpGt,_) >] -> l
 						| [< >] -> []
 					) in
+					let name = get_typename name sub params in
 					name, params, sub
 			in
 			{
@@ -1315,6 +1319,7 @@ and parse_var_decls_next ?(is_const=false) vl = parser
 		vl
 
 and parse_var_decls ?(is_const=false) p1 = parser
+	| [< e = parse_tuple_deconstruct ~is_const:is_const custom_error >] -> e
 	| [< name,t,meta = parse_var_decl_head ~is_const:is_const; s >] ->
 		let eo = parse_var_assignment s in
 		List.rev (parse_var_decls_next ~is_const:is_const [name,t,eo,meta] s)
@@ -1451,7 +1456,7 @@ and expr s =
 	| [< '(POpen,p1); e = expr; s >] -> (match s with parser
 		| [< '(PClose,p2); s >] -> expr_next (EParenthesis e, punion p1 p2) s
 		| [< t = parse_type_hint; '(PClose,p2); s >] -> expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
-		| [< >] -> serror())
+		| [< s >] -> parse_tuple p1 e serror s)
 	| [< '(BkOpen,p1); l = parse_array_decl; '(BkClose,p2); s >] -> expr_next (EArrayDecl l, punion p1 p2) s
 	| [< '(Kwd Function,p1); e = parse_function p1 false; >] -> e
 	| [< '(Unop op,p1) when is_prefix op; e = expr >] -> make_unop op e p1
@@ -1574,7 +1579,7 @@ and expr_next e1 = parser
 		| [< '(Binop OpOr,p2) when do_resume() >] ->
 			set_resume p1;
 			display (EDisplay (e1,true),p1) (* help for debug display mode *)
-		| [< params = parse_call_params e1; '(PClose,p2); s >] -> expr_next (ECall (e1,params) , punion (pos e1) p2) s
+		| [< params = parse_call_params e1; '(PClose,p2); s >] -> tuple_or_ecall e1 params p2 custom_error s
 		| [< >] -> serror())
 	| [< '(BkOpen,_); e2 = expr; '(BkClose,p2); s >] ->
 		expr_next (EArray (e1,e2), punion (pos e1) p2) s
@@ -1890,5 +1895,8 @@ parse_class_fields_ref := parse_class_fields;
 make_binop_ref := make_binop;
 parse_call_params_ref := parse_call_params;
 expr_ref := expr;
+expr_next_ref := expr_next;
 toplevel_expr_ref := toplevel_expr;
 display_ref := display;
+parse_var_decl_head_ref := parse_var_decl_head;
+parse_var_assignment_ref := parse_var_assignment;

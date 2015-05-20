@@ -26,8 +26,15 @@ let parse_class_fields_ref:(bool -> pos -> token_stream -> class_field list*pos)
 let make_binop_ref:(binop -> expr -> expr -> expr)  ref = ref (fun _ _ _ -> assert false)
 let parse_call_params_ref:(expr -> token_stream -> expr list) ref = ref (fun _ _ -> assert false)
 let expr_ref:(token_stream -> expr) ref = ref (fun _ -> assert false)
+let expr_next_ref:(expr -> token_stream -> expr) ref = ref (fun _ _ -> assert false)
 let toplevel_expr_ref:(token_stream -> expr) ref = ref (fun _ -> assert false)
 let display_ref:(expr -> expr) ref = ref (fun _ -> assert false)
+let parse_string_ref:(Common.context -> string -> pos -> bool -> string list * (type_def * pos) list) ref = ref (fun _ _ _ _ -> assert false)
+let type_module_with_decls_ref:(Typecore.typer -> Type.path -> string -> type_decl list -> pos -> Type.module_def) ref = ref (fun _ _ _ _ _ -> assert false)
+let load_instance_ref:(Typecore.typer -> type_path -> pos -> bool -> Type.t) ref = ref (fun _ _ _ _ -> assert false)
+let add_dependency_ref:(Type.module_def -> Type.module_def -> unit) ref = ref (fun _ _ -> assert false)
+let parse_var_decl_head_ref:(token_stream -> string * complex_type option * metadata) ref = ref (fun _ -> assert false)
+let parse_var_assignment_ref:(token_stream -> expr option) ref = ref (fun _ -> assert false)
 
 let mk_efield e n p = EField (e, n), p
 let mk_eblock b p = EBlock b, p
@@ -333,10 +340,11 @@ let ext_expr hx s =
 	else
 		hx s
 
-let parse_cc_opt_access = parser
-	| [< '(Kwd Private, _) >] -> [APrivate]
-	| [< '(Kwd Public, _) >] -> [APublic]
-	| [< >] -> [APublic]
+let rec parse_cc_opt_access ?(allow_inline=true) ?(allow_access=true) s = match s with parser
+	| [< '(Kwd Private, _) when allow_access; s>] -> APrivate::(parse_cc_opt_access ~allow_access:false ~allow_inline:allow_inline s)
+	| [< '(Kwd Public, _) when allow_access; s>] -> APublic::(parse_cc_opt_access ~allow_access:false ~allow_inline:allow_inline s)
+	| [< '(Kwd Inline, _) when allow_inline; s >] -> AInline::(parse_cc_opt_access  ~allow_access:allow_access ~allow_inline:false s)
+	| [< >] -> if allow_access then [APublic] else []
 
 let parse_cc_param_opt_access = parser
 	| [< '(Kwd Private, _) >] -> [APrivate]
@@ -438,7 +446,7 @@ let declared_symbols ns =
 			| n::ns ->
 				begin try
 					let s = Hashtbl.find ht n in
-					if s.s_redeclared_cnt==0 then
+					if s.s_redeclared_cnt=0 then
 						let _,p,_ = s.s_cca.cca_arg in
 						!warning ("Shadowing constructor parameter " ^ n) p;
 						s.s_redeclared_cnt <- s.s_redeclared_cnt + 1;
@@ -495,7 +503,7 @@ let use_symbol n =
 			let ss = !ext_symbols in
 			let no_local = not ss.ss_can_access_local in
 			let s = Hashtbl.find ss.ss_table n in
-			if no_local && s.s_redeclared_cnt==0 then
+			if no_local && s.s_redeclared_cnt=0 then
 				let _ = add_cc_arg_to_cf s.s_cca in ()
 		with Not_found -> ()
 	else ()
@@ -627,3 +635,160 @@ let parse_cc_extends occ s =
 
 let filter_class_fields fl =
 	List.filter (fun cf -> match cf with {cff_name=""; _} -> false | _ -> true) fl
+
+let get_typename name sub params =
+	if !use_extended_syntax then
+		let ln = (List.length params) in
+		match name, sub with
+		| "Tuple", None when ln > 0 ->
+			name^(string_of_int ln)
+		| _ -> name
+	else name
+
+let re_tuple = Str.regexp "^Tuple\\([0-9]+\\)$"
+
+let mk_tuple_name i = "Tuple"^(string_of_int i)
+
+let get_tuple_arity s =
+	try
+		ignore(Str.search_forward re_tuple s 0);
+		int_of_string (Str.matched_group 1 s)
+	with Not_found -> 0
+
+let create_tuple ctx arity =
+	let cn = mk_tuple_name arity in
+	let mk_args ?(sfx="") n l =
+		let mk_arg i =
+			let s_i = string_of_int i in
+			let s = n ^ s_i in
+			if sfx="" then s else s^sfx^s_i
+		in
+		let rec loop i acc =
+			if i<=0 then acc
+			else loop (i-1) ((mk_arg i) ::acc)
+		in loop l []
+	in
+	let s_args ?(sfx="") n = String.concat "," (mk_args ~sfx:sfx n arity) in
+	let params = s_args "T" in
+	let args = s_args ~sfx:":T" "val _" in
+	let s = Printf.sprintf "@:generic @:final class %s<%s> inline (%s) extends Tuple(%d) {\n" cn params args arity in
+	let body = ref [] in
+	body := (Printf.sprintf "public def toString()='(%s)';" (s_args "$_"))::!body;
+	body := (Printf.sprintf "inline public def toArray():Array<Dynamic>=[%s];" (s_args "_"))::!body;
+	let s = s^(String.concat "\n" !body)^"\n}" in
+	let f = Printf.sprintf "%s.ehx" cn in
+	let p = { pfile=f; pmin=0; pmax=String.length s; } in
+	let ues = ctx.Common.use_extended_syntax in
+	ctx.Common.use_extended_syntax <- true;
+	try
+		let ret = (!parse_string_ref) ctx s p true, cn, p in
+		ctx.Common.use_extended_syntax <- ues;
+		ret
+	with e ->
+		ctx.Common.use_extended_syntax <- ues;
+		raise e
+
+let create_type_on_fly ctx tname error =
+	let i = get_tuple_arity tname in
+	if i <= 0 then error()
+	else
+		let (pack, decls), cn, p = create_tuple ctx.Typecore.com i in
+		(!type_module_with_decls_ref) ctx ([], cn) p.pfile decls p
+
+let rec parse_tuple_expr acc = parser
+	| [< e = (!expr_ref); s >] ->
+		(match s with parser
+		| [< '(Comma,_); l = parse_tuple_expr (e::acc) >] -> l
+		| [< >] -> e::acc)
+	| [< >] -> acc
+
+let parse_tuple p1 e error s =
+	if !use_extended_syntax then match s with parser
+		| [< '(Comma, _); es=parse_tuple_expr [e]; s >] -> 
+			(match s with parser
+			| [<' (PClose,p2); s>] ->
+				let cnt = List.length es in
+				let t = mk_type [] (mk_tuple_name cnt) [] None in
+					(!expr_next_ref) (ENew (t, List.rev es), punion p1 p2) s
+			| [< >] -> error())
+		| [< >] -> error()
+	else error()
+
+let parse_tuple_head ?(is_const=false) index s =
+	let name, t, meta = (!parse_var_decl_head_ref) s in
+	let meta = if is_const then (Meta.Const,[],null_pos)::meta else meta in
+	name, t, index, meta
+
+let rec parse_tuple_assigment_next ?(is_const=false) vl index = parser
+	| [< '(Comma,p1); s; >] ->
+		(match Stream.peek s with
+		| Some(t, _)  when t=PClose -> vl
+		| _ -> 
+			(match s with parser 
+			| [< name,t, i, meta = parse_tuple_head ~is_const:is_const index; s >] ->
+				begin try
+					let vl = if name="_" then vl else (name, t, i, meta)::vl in
+					parse_tuple_assigment_next vl (i+1) s
+				with Display e ->
+					let v = name,t,None, meta in
+					let vl = List.map (fun (n,t,i,m) -> n,t,None,m) vl in
+					let e = (EVars(List.rev (v :: vl)),punion p1 (pos e)) in
+					raise (Display e)
+				end
+			| [< >] -> vl))
+	| [< >] -> vl
+
+let parse_tuple_assignment ?(is_const=false) index = parser
+	| [< name, t, i, meta = parse_tuple_head ~is_const:is_const index; s >] ->
+		let acc = if name="_" then [] else [name, t, i, meta] in
+		parse_tuple_assigment_next ~is_const:is_const acc (i+1) s
+
+let parse_tuple_deconstruct ?(is_const=false) custom_error = parser
+	| [< '(POpen, p1) when !use_extended_syntax; l=parse_tuple_assignment ~is_const:is_const 1; '(PClose, p2); s >] ->
+		(match (!parse_var_assignment_ref) s with
+		| Some(e) ->
+			List.map (fun (n,t,i,m) ->
+				let ef = EField (e, ("_" ^ (string_of_int i))) in
+				let e = Some (ef, pos e) in
+				n,t,e,m
+			) l
+		| _ -> custom_error "Assignment required for tuple extractor" p1)
+
+let tuple_or_ecall e params p custom_error s =
+	let pe = pos e in
+	let next() = (!expr_next_ref) (ECall (e,params) , punion pe p) s in
+	if !use_extended_syntax then
+		let l = List.length params in
+		match e with
+		| EConst(Ident n), _ when l>0 && (n="val" || n="const") ->
+			let m = [Meta.Const, [], pos e] in
+			(match Stream.peek s with
+			| Some (Binop OpAssign, _) ->
+				let empty = "", None, 0, [] in
+				let index = ref 0 in
+				let rec from_expr meta = function
+					| EConst(Ident n), _ ->
+						incr index;
+						if n="_" then empty else n, None, !index, meta
+					| EMeta((name, params, pm), e), _ -> from_expr ((name, params, pm)::meta) e
+					| e -> custom_error "Invalid parameter for tuple extractor" (pos e)
+				in
+				let fl = List.map (from_expr m) params in
+				let fl = List.filter(fun (n,_,_,_) -> n<>"") fl in
+				(match (!parse_var_assignment_ref) s with
+				| Some(ae) ->
+					let pae = pos ae in
+					let vl = List.map (fun (n,t,i,m) ->
+						let ef = EField (ae, ("_" ^ (string_of_int i))) in
+						let ae = Some (ef, pae) in
+						n,t,ae,m
+					) fl
+					in
+					EVars vl, punion pe (pos ae)
+				| _ ->
+					let _ = custom_error "Assignment required for tuple extractor" pe in
+					EVars [], null_pos
+				)
+			| _ -> next())
+		| _ -> next()
+	else next()

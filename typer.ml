@@ -5096,4 +5096,6 @@ get_constructor_ref := get_constructor;
 cast_or_unify_ref := Codegen.AbstractCast.cast_or_unify_raise;
 type_module_type_ref := type_module_type;
 find_array_access_raise_ref := Codegen.AbstractCast.find_array_access_raise;
-build_call_ref := build_call
+build_call_ref := build_call;
+Extparser.parse_string_ref := parse_string;
+Extparser.load_instance_ref := Typeload.load_instance;

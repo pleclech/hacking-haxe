@@ -287,7 +287,10 @@ let rec load_type_def ctx p t =
 					| "std" :: l ->
 						let t = { t with tpackage = l } in
 						t, ctx.g.do_load_module ctx (t.tpackage,t.tname) p
-					| _ -> raise e
+					| _ ->
+						let error() = raise e in
+						ignore(Extparser.create_type_on_fly ctx t.tname error);
+						t, ctx.g.do_load_module ctx (t.tpackage,t.tname) p
 				) in
 				let tpath = (t.tpackage,tname) in
 				try
@@ -3140,6 +3143,8 @@ let type_module ctx m file ?(is_extern=false) tdecls p =
 		add_dependency m ctx.g.std;
 		(* this will ensure both String and (indirectly) Array which are basic types which might be referenced *)
 		ignore(load_core_type ctx "String");
+
+		ignore(load_core_type ctx "Tuple");
 	end;
 	(* here is an additional PASS 1 phase, which define the type parameters for all module types.
 		 Constraints are handled lazily (no other type is loaded) because they might be recursive anyway *)
@@ -3300,4 +3305,6 @@ let load_module ctx m p =
 	m2
 
 ;;
-type_function_params_rec := type_function_params
+type_function_params_rec := type_function_params;
+Extparser.add_dependency_ref := add_dependency;
+Extparser.type_module_with_decls_ref := (fun ctx m file tdecls p -> type_module ctx m file tdecls p);
