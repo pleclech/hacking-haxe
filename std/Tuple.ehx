@@ -1,1 +1,10 @@
 class Tuple inline (val arity:Int);
+
+/*
+ class TupleXXX is created on the fly with this model:
+
+ @:generic @:final class TupleXXX<T1,..,TXXX> inline (_1:T1,...,_XXX:TXXX) extends Tuple(XXX) {
+ 	public def toString()='$_1,...,$_XXX';
+ 	public inline def toArray()=[_1,...,_XXX];
+ }
+*/
