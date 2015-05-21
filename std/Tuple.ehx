@@ -1,5 +1,7 @@
 interface Tuple {
 	val arity:Int;
+	def toString():String;
+	def toArray():Array<Dynamic>;
 }
 
 /*
