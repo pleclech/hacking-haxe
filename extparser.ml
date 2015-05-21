@@ -295,13 +295,12 @@ let add_const_init al e =
 		| _ -> mk_eblock (al@[e]) p
 
 let const_pos s = match Stream.npeek 2 s with
-	| [(Kwd KConst, p); (Kwd In, _)] | [(Kwd Val, p); (Kwd In, _)]  ->
-		None
-	| [(Kwd KConst, p); (Kwd _, _)] | [(Kwd KConst, p); (Const(Ident _), _)]
-	| [(Kwd Val, p); (Kwd _, _)] | [(Kwd Val, p); (Const(Ident _), _)] ->
-		Some p
-	| _ ->
-	 	None
+	| [Kwd KConst, p; t] | [Kwd Val, p; t] ->
+		(match fst t with
+		| Kwd In -> None
+		| POpen | Const(Ident _) | Kwd _ -> Some p
+		| _ -> None)
+	| _ -> None
 
 let reserved_kwd_allowed = parser
 	| [< '(Kwd Val,p) >] -> "val", p

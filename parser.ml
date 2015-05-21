@@ -1255,10 +1255,9 @@ and block ?(meta=[]) acc s =
 			block acc s
 
 and parse_block_elt = parser
-	| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] ->
-		merge_or_expr (EVars vl,punion p1 p2)
+	| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] -> merge_or_expr (EVars vl,punion p1 p2)
 	| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e
-	| [< vl,p1 = parse_consts_expr; p2 = semicolon >] -> merge_or_expr (EVars vl, punion p1 p2)
+	| [< vl,p1 = parse_consts_expr; p2 = semicolon >] -> merge_or_expr (EVars vl,punion p1 p2)
 	| [< e = expr; _ = semicolon >] -> e
 
 and parse_obj_decl = parser
