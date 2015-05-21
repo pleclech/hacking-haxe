@@ -1197,6 +1197,7 @@ and block1 s =
 		| [< '(Const (String name),p); s >] -> block2 ~meta:meta (quote_ident name) (String name) p s
 		| [< b = block ~meta:meta [] >] -> EBlock b
 	else
+		let meta = List.filter(fun (mn,pm,po) -> mn<>Meta.Const) meta in
 		match s with parser
 		| [< b = block ~meta:meta [] >] -> EBlock b
 
