@@ -1256,7 +1256,7 @@ and block ?(meta=[]) acc s =
 
 and parse_block_elt = parser
 	| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] ->
-		(EVars vl,punion p1 p2)
+		merge_or_expr (EVars vl,punion p1 p2)
 	| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e
 	| [< e,p1 = parse_consts_expr; p2 = semicolon >] -> e, punion p1 p2
 	| [< e = expr; _ = semicolon >] -> e
@@ -1380,14 +1380,14 @@ and parse_consts_expr s =
 	let sp = const_pos s in
 	match  sp with
 	| Some p ->
-		Stream.junk s;	
-		EVars (parse_var_decls ~is_const:true p s), p
+		Stream.junk s;
+		merge_or_expr (EVars (parse_var_decls ~is_const:true p s), p)
 	| None -> raise Stream.Failure
 
 and parse_for_init s =
 	if !use_extended_syntax then
 		match s with parser
-		| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] -> (EVars vl,punion p1 p2), false
+		| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] -> merge_or_expr (EVars vl,punion p1 p2), false
 		| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e, false
 		| [< e = expr; s >] ->
 			let efor =
@@ -1456,7 +1456,7 @@ and expr s =
 	| [< '(POpen,p1); e = expr; s >] -> (match s with parser
 		| [< '(PClose,p2); s >] -> expr_next (EParenthesis e, punion p1 p2) s
 		| [< t = parse_type_hint; '(PClose,p2); s >] -> expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
-		| [< s >] -> parse_tuple p1 e serror s)
+		| [< s >] -> parse_tuple p1 e serror custom_error s)
 	| [< '(BkOpen,p1); l = parse_array_decl; '(BkClose,p2); s >] -> expr_next (EArrayDecl l, punion p1 p2) s
 	| [< '(Kwd Function,p1); e = parse_function p1 false; >] -> e
 	| [< '(Unop op,p1) when is_prefix op; e = expr >] -> make_unop op e p1

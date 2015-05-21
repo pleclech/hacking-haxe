@@ -48,6 +48,8 @@ let mk_ethis_assign fn pfn =
 	let e_this = mk_eident "this" pfn in
 	let e_this = (EField (e_this, fn) , pfn) in
 	mk_eassign e_this (mk_eident fn pfn)
+let mk_emergeblock blk p =
+	EMeta((Meta.MergeBlock, [], p), (EBlock blk, p)), p
 
 type 'a stream_state_t = {
 	mutable ss_q: 'a Queue.t; (* priority queue *)
@@ -185,6 +187,7 @@ let clear_and_push_flag f = push_flag (clear_flag f !ext_current_flag)
 let is_current_flag_set f = is_flag_set f !ext_current_flag
 
 let inside_cc_flag = 1
+let pop_expr_flag = 2
 
 let empty_ext_symbol() = {ss_can_access_local=true; ss_depth=0; ss_table=Hashtbl.create 0; ss_redeclared_names=[[]]; }
 let default_ext_symbol = empty_ext_symbol()
@@ -233,7 +236,7 @@ let pop_cc() = (match (!ext_state).es_cc with
 		update_symbols_from_cc None);
 	pop_flag()
 
-let insert_expr ?(with_semi=true) (es:expr list) =
+let insert_exprs ?(with_semi=true) (es:expr list) =
 		let q = (!ext_state).es_exprs in
 		let insert e = 
 			Queue.push e q;
@@ -711,14 +714,48 @@ let rec parse_tuple_expr acc = parser
 		| [< >] -> e::acc)
 	| [< >] -> acc
 
-let parse_tuple p1 e error s =
+let tuple_or_enew t al p custom_error s =
+	let next() = (!expr_next_ref) (ENew (t,al), p) s in
+	if !use_extended_syntax then begin
+		match Stream.peek s with
+		| Some (Binop OpAssign, _) when (get_tuple_arity t.tname)>0&& t.tparams=[] && t.tsub=None ->
+			(match (!parse_var_assignment_ref) s with
+			| Some(ae) as sae ->
+				let blk = ref [] in
+				let ae = match ae with
+					| EConst (Ident _), p -> ae
+					| _, p ->
+						let vn = fresh_name "__td" in
+						blk := (EVars [vn, None, sae, [Meta.Const,[],p]], p)::!blk;
+						mk_eident vn p
+				in
+				let pae = pos ae in
+				let index = ref 0 in
+				List.iter (fun e ->
+					incr index;
+					match e with
+					| EConst (Ident "_"), _ -> ()
+					| _ ->
+						let ef = EField (ae, ("_" ^ (string_of_int !index))), pae in
+						blk := (mk_eassign e ef)::!blk
+				) al;
+				let bpe = punion p pae in
+				EMeta((Meta.MergeBlock, [], bpe), (EBlock (List.rev (!blk)), bpe)), bpe
+			| _ ->
+				let _ = custom_error "Assignment required for tuple extractor" p in
+				EVars [], null_pos
+			)
+		| _ -> next()
+	end else next()
+
+let parse_tuple p1 e error custom_error s =
 	if !use_extended_syntax then match s with parser
 		| [< '(Comma, _); es=parse_tuple_expr [e]; s >] -> 
 			(match s with parser
 			| [<' (PClose,p2); s>] ->
 				let cnt = List.length es in
 				let t = mk_type [] (mk_tuple_name cnt) [] None in
-					(!expr_next_ref) (ENew (t, List.rev es), punion p1 p2) s
+					tuple_or_enew t (List.rev es) (punion p1 p2) custom_error s
 			| [< >] -> error())
 		| [< >] -> error()
 	else error()
@@ -755,10 +792,19 @@ let parse_tuple_assignment ?(is_const=false) index = parser
 let parse_tuple_deconstruct ?(is_const=false) custom_error = parser
 	| [< '(POpen, p1) when !use_extended_syntax; l=parse_tuple_assignment ~is_const:is_const 1; '(PClose, p2); s >] ->
 		(match (!parse_var_assignment_ref) s with
-		| Some(e) ->
+		| Some(ae) as sae ->
+			let pae = pos ae in
+			let ae = match ae with
+				| EConst (Ident _), p -> ae
+				| _, p ->
+					let vn = fresh_name "__td" in
+					insert_exprs ~with_semi:false [(EVars [vn, None, sae, [Meta.Const, [], pae] ], p)];
+					push_flag pop_expr_flag;
+					mk_eident vn p
+			in
 			List.map (fun (n,t,i,m) ->
-				let ef = EField (e, ("_" ^ (string_of_int i))) in
-				let e = Some (ef, pos e) in
+				let ef = EField (ae, ("_" ^ (string_of_int i))) in
+				let e = Some (ef, pae) in
 				n,t,e,m
 			) l
 		| _ -> custom_error "Assignment required for tuple extractor" p1)
@@ -801,11 +847,11 @@ let tuple_or_ecall e params p custom_error s =
 						n,t,ae,m
 					) fl
 					in
-					let bpe = punion pe (pos ae) in
+					let bpe = punion pe pae in
 					let evars = (EVars vl, bpe) in
 					(match !blk with
 					| [] -> evars
-					| blk -> EMeta((Meta.MergeBlock, [], bpe), (EBlock (List.rev (evars::blk)), bpe)), bpe)
+					| blk -> mk_emergeblock (List.rev (evars::blk)) bpe)
 				| _ ->
 					let _ = custom_error "Assignment required for tuple extractor" pe in
 					EVars [], null_pos
@@ -813,3 +859,11 @@ let tuple_or_ecall e params p custom_error s =
 			| _ -> next())
 		| _ -> next()
 	else next()
+
+let merge_or_expr e =
+	if is_current_flag_set pop_expr_flag then
+		let e2 = pop_expr() in
+		let e = mk_emergeblock [e2; e] (punion (pos e2) (pos e)) in
+		pop_flag();
+		e
+	else e
