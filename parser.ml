@@ -574,11 +574,12 @@ let rec	parse_file s =
 	let pack, decls =
 		match s with parser
 		| [< '(Kwd Package,_); pack = parse_package; s >] ->
+			set_package pack s;
 			begin match s with parser
 			| [< '(Const(Ident _),p) when pack = [] >] -> error (Custom "Package name must start with a lowercase character") p
 			| [< _ = semicolon; l = parse_type_decls pack []; '(Eof,_) >] -> pack , l
 			end
-		| [< l = parse_type_decls [] []; '(Eof,_) >] -> [] , l
+		| [< _=set_package []; l = parse_type_decls [] []; '(Eof,_) >] -> [] , l
 	in
 	augment_decls pack decls
 

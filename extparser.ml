@@ -8,6 +8,9 @@ type token_stream = (token*pos) Stream.t
 
 let warning : (string -> pos -> unit) ref = ref (fun _ _ -> assert false)
 
+let replace input output =
+    Str.global_replace (Str.regexp_string input) output
+
 let rec psep sep f = parser
 	| [< v = f; s >] ->
 		let rec loop = parser
@@ -16,7 +19,6 @@ let rec psep sep f = parser
 		in
 		v :: loop s
 	| [< >] -> []
-
 
 let parse_meta_ref:(?is_const:bool -> token_stream -> metadata) ref = ref (fun ?is_const _ -> assert false)
 let dollar_ident_ref:(token_stream -> string*pos) ref = ref (fun _ -> assert false)
@@ -155,10 +157,11 @@ type ext_state_t = {
 	mutable es_uid:int;
 	mutable es_ofs:class_field list;
 	mutable es_cd:string * pos;
+	mutable es_pkg:string list;
 }
 
 let ext_current_flag = ref 0
-let empty_ext_state() = {es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; es_uid=0; es_ofs=[]; es_cd="",null_pos; }
+let empty_ext_state() = {es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; es_uid=0; es_ofs=[]; es_cd="",null_pos; es_pkg=[]}
 
 let ext_states = ref []
 
@@ -444,13 +447,14 @@ let add_classdecl n p =
 
 let object_name = "HxObjects"
 
-let get_package_from_file n =
+let get_filename n =
 	match List.rev (ExtString.String.nsplit n ".") with
 	| _::n::ns ->
+		let n = replace "\\" "/" n in
 		(match List.rev (ExtString.String.nsplit n "/") with
-		| x::xs -> xs
-		| _ -> [])
-	| _ -> []
+		| x::xs -> x
+		| _ -> n)
+	| _ -> ""
 
 let  parse_opt_class_body p1 name s =
 	add_classdecl name p1;
@@ -620,7 +624,7 @@ let parse_class_constructor class_name cp p custom_error s =
 	in
 	let cc =
 		if is_current_flag_set obj_decl_flag then
-			let aname = object_name::(get_package_from_file p.pfile) in
+			let aname = object_name::(!ext_state).es_pkg in
 			let aname = String.concat "." (List.rev aname) in
 			match cc with
 			| Some c ->
@@ -945,12 +949,8 @@ let augment_decls pack decls =
 	let es = !ext_state in
 	if (List.length es.es_ofs) > 0 then
 		let p = (snd es.es_cd) in
-		let pname = (match List.rev (ExtString.String.nsplit p.pfile ".") with
-		| _::n::ns ->
-			let acc = (ExtString.String.nsplit n "/")@[object_name] in
-			List.map(fun n -> n,null_pos) acc
-		| _ -> [])
-		in
+		let pname = pack@[(get_filename p.pfile);object_name] in
+		let pname = List.map(fun n -> n,null_pos) pname in
 		let decls = (EImport (pname,IAll), null_pos)::decls in
 		let ho = EClass {
 			d_name = object_name;
@@ -964,3 +964,6 @@ let augment_decls pack decls =
 		pack, decls@[ho]
 	else
 		pack, decls
+
+let set_package pack s =
+	(!ext_state).es_pkg = pack
