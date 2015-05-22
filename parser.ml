@@ -571,13 +571,16 @@ let semicolon s =
 
 let rec	parse_file s =
 	last_doc := None;
-	match s with parser
-	| [< '(Kwd Package,_); pack = parse_package; s >] ->
-		begin match s with parser
-		| [< '(Const(Ident _),p) when pack = [] >] -> error (Custom "Package name must start with a lowercase character") p
-		| [< _ = semicolon; l = parse_type_decls pack []; '(Eof,_) >] -> pack , l
-		end
-	| [< l = parse_type_decls [] []; '(Eof,_) >] -> [] , l
+	let pack, decls =
+		match s with parser
+		| [< '(Kwd Package,_); pack = parse_package; s >] ->
+			begin match s with parser
+			| [< '(Const(Ident _),p) when pack = [] >] -> error (Custom "Package name must start with a lowercase character") p
+			| [< _ = semicolon; l = parse_type_decls pack []; '(Eof,_) >] -> pack , l
+			end
+		| [< l = parse_type_decls [] []; '(Eof,_) >] -> [] , l
+	in
+	augment_decls pack decls
 
 and parse_type_decls pack acc s =
 	try
@@ -611,16 +614,23 @@ and parse_type_decl s =
 				d_flags = List.map snd c @ n;
 				d_data = l
 			}, punion p1 p2)
-		| [< n , p1 = parse_class_flags; name = type_name; tl = parse_constraint_params; cc=parse_class_constructor name tl; hl = plist (parse_class_herit ~cc:cc); fl, p2 = parse_opt_class_body p1 name >] ->
+		| [< n , p1 = parse_class_flags ~allow_object:true; name = type_name; tl = parse_constraint_params; cc=parse_class_constructor name tl p1 custom_error; hl = plist (parse_class_herit ~cc:cc); fl, p2 = parse_opt_class_body p1 name >] ->
 			let fl = update_cfs name cc fl p1 p2 in
 			to_pseudo_private name fl;
+			let dflags = List.map fst c @ n @ hl in
+			let dflags =
+				if is_current_flag_set obj_decl_flag then begin
+					pop_flag();
+					HPrivate::dflags
+				end else dflags
+			in
 			pop_cc();
 			(EClass {
 				d_name = name;
 				d_doc = doc;
 				d_meta = meta;
 				d_params = tl;
-				d_flags = List.map fst c @ n @ hl;
+				d_flags = dflags;
 				d_data = fl;
 			}, punion p1 p2)
 		| [< '(Kwd Typedef,p1); name = type_name; tl = parse_constraint_params; '(Binop OpAssign,p2); t = parse_complex_type; s >] ->
@@ -646,6 +656,7 @@ and parse_type_decl s =
 				d_flags = flags @ sl;
 				d_data = fl;
 			},punion p1 p2)
+
 
 and parse_class doc meta cflags need_name s =
 	let opt_name = if need_name then type_name else (fun s -> match popt type_name s with None -> "" | Some n -> n) in
@@ -825,9 +836,12 @@ and meta_name = parser
 and parse_enum_flags = parser
 	| [< '(Kwd Enum,p) >] -> [] , p
 
-and parse_class_flags = parser
+and parse_class_flags ?(allow_object=false) = parser
 	| [< '(Kwd Class,p) >] -> [] , p
 	| [< '(Kwd Interface,p) >] -> [HInterface] , p
+	| [< '(Const (Ident "object"), p) when allow_object >] ->
+		push_flag obj_decl_flag;
+		[], p
 
 and parse_type_hint = parser
 	| [< '(DblDot,_); t = parse_complex_type >] -> t
@@ -1034,7 +1048,7 @@ and parse_class_field s =
 							else meta
 						in *)
 						name, p, e, meta, None)
-				| [< '(Kwd Function,p1); name = parse_fun_name; pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
+				| [< '(Kwd Function,p1); name = parse_fun_name; _=is_function_allowed name p1 custom_error; pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
 					enter_new_scope (Some false);
 					let e, p2 = (match s with parser
 						| [< e = toplevel_expr; s >] ->
@@ -1065,7 +1079,7 @@ and parse_class_field s =
 			in
 			if !use_extended_syntax then
 				match s with parser
-				| [< '(Kwd Def,p1); name = parse_fun_name; po = parse_opt_fun_args; t = parse_type_opt; s >] ->
+				| [< '(Kwd Def,p1); name = parse_fun_name; _=is_function_allowed name p1 custom_error; po = parse_opt_fun_args; t = parse_type_opt; s >] ->
 						enter_new_scope (Some false);
 						let pl, args, name, ooe = match po with
 							| None ->
@@ -1128,7 +1142,9 @@ and parse_class_field s =
 			cff_kind = k;
 		}
 
-and parse_cf_rights allow_static l = parser
+and parse_cf_rights allow_static l s =
+	let allow_static = if allow_static then is_static_allowed() else allow_static in
+	match s with parser
 	| [< '(Kwd Static,_) when allow_static; l = parse_cf_rights false (AStatic :: l) >] -> l
 	| [< '(Kwd Macro,_) when not(List.mem AMacro l); l = parse_cf_rights allow_static (AMacro :: l) >] -> l
 	| [< '(Kwd Public,_) when not(List.mem APublic l || List.mem APrivate l); l = parse_cf_rights allow_static (APublic :: l) >] -> l
@@ -1181,7 +1197,7 @@ and parse_constraint_param = parser
 		}
 
 and parse_class_herit ?(cc=None) = parser
-	| [< '(Kwd Extends,_); t = parse_type_path; _=parse_cc_extends cc >] -> HExtends t
+	| [< '(Kwd Extends, p); _=is_extend_allowed p custom_error; t = parse_type_path; _=parse_cc_extends cc >] -> HExtends t
 	| [< '(Kwd Implements,_); t = parse_type_path >] -> HImplements t
 
 and block1 s =

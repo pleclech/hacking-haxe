@@ -153,10 +153,12 @@ type ext_state_t = {
 	mutable es_cc:class_constructor_t option list;
 	mutable es_flags:int list;
 	mutable es_uid:int;
+	mutable es_ofs:class_field list;
+	mutable es_cd:string * pos;
 }
 
 let ext_current_flag = ref 0
-let empty_ext_state() = {es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; es_uid=0; }
+let empty_ext_state() = {es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; es_uid=0; es_ofs=[]; es_cd="",null_pos; }
 
 let ext_states = ref []
 
@@ -188,6 +190,7 @@ let is_current_flag_set f = is_flag_set f !ext_current_flag
 
 let inside_cc_flag = 1
 let pop_expr_flag = 2
+let obj_decl_flag = 4 
 
 let empty_ext_symbol() = {ss_can_access_local=true; ss_depth=0; ss_table=Hashtbl.create 0; ss_redeclared_names=[[]]; }
 let default_ext_symbol = empty_ext_symbol()
@@ -419,14 +422,45 @@ let update_cfs class_name occ fl p1 p2 = match occ with
 			fl
 	| _ -> fl
 
-let  parse_opt_class_body p1 name =
-	if (!use_extended_syntax) then parser
+let add_object_def es n p =
+	let enew = ENew ({tparams=[];tsub=None;tname=n;tpackage=[]}, []), p in
+	let cf =
+		{
+			cff_name = n;
+			cff_meta = [];
+			cff_access = [APublic; AStatic];
+			cff_doc = None;
+			cff_kind = FVar (None, Some enew);
+			cff_pos = p;
+		}
+	in
+	es.es_ofs <- cf::es.es_ofs
+
+let add_classdecl n p =
+	let es = !ext_state in
+	es.es_cd <- n,p;
+	if is_current_flag_set obj_decl_flag then ignore(add_object_def es n p)
+	else ()
+
+let object_name = "HxObjects"
+
+let get_package_from_file n =
+	match List.rev (ExtString.String.nsplit n ".") with
+	| _::n::ns ->
+		(match List.rev (ExtString.String.nsplit n "/") with
+		| x::xs -> xs
+		| _ -> [])
+	| _ -> []
+
+let  parse_opt_class_body p1 name s =
+	add_classdecl name p1;
+	if (!use_extended_syntax) then match s with parser
 		| [< '(Semicolon,p) >] -> pending_cfs [], p
 		| [< '(BrOpen,_); fl, p2 = (!parse_class_fields_ref) false p1 >] ->
 				(*let allow_init cf = cf.cff_meta <- ((Meta.Custom "allow_init"),[],null_pos) :: cf.cff_meta in
 				List.iter (fun c -> match c with | {cff_kind=FVar _; } as cf -> allow_init cf | {cff_kind=FProp _; } as cf -> allow_init cf | _ -> ()) fl;*)
 			fl, p2
-	else parser
+	else match s with parser
 		| [< '(BrOpen,_); fl, p2 = (!parse_class_fields_ref) false p1 >] -> fl, p2
 
 let type_or_infer ot = if ot=None then Some(CTPath (mk_type_inf [])) else ot
@@ -558,23 +592,46 @@ let parse_cc_param_with_ac meta ac (il, im) s =
 let parse_cc_param = parser
 	| [< meta=(!parse_meta_ref); ac=parse_cc_param_opt_access; m=parse_cc_param_opt_modifier; s >] -> parse_cc_param_with_ac meta ac m s
 
-let parse_class_constructor class_name cp s =
+let parse_class_constructor class_name cp p custom_error s =
+	let mk_data() =
+		let ss = empty_ext_symbol() in
+		let ic = Queue.create() in
+		ext_symbols := ss;
+		ext_init_code := ic;
+		ss, ic
+	in
+	let mk_cc meta acl arl cp (ss, ic) =
+		Some {cc_meta=meta; cc_al=acl; cc_args=arl; cc_symbols=ss; cc_code=(!ext_init_code); cc_constraints=cp; }
+	in
 	let cc =
-		if !use_extended_syntax then begin
+		if !use_extended_syntax then
 			match s with parser
 			| [< meta=(!parse_meta_ref); acl=parse_cc_opt_access; s >] ->
-				if meta=[]&&acl=[] then None
-				else match s with parser
+				(*if meta=[]&&acl=[] then None
+				else *)
+					(match s with parser
 					| [< '(POpen,o1); s >] ->
-						let ss = empty_ext_symbol() in
-						ext_init_code := Queue.create();
-						ext_symbols := ss;
+						let data = mk_data() in
 						(match s with parser
-						| [< arl=psep Comma parse_cc_param; '(PClose,o2) >] ->
-							Some {cc_meta=meta; cc_al=acl; cc_args=arl; cc_symbols=ss; cc_code=(!ext_init_code); cc_constraints=cp; })
-					| [< >] -> None
+						|[< arl=psep Comma parse_cc_param; '(PClose,o2) >] -> mk_cc meta acl arl cp data)
+					| [< >] -> None)
 			| [< >] -> None
-		end else None
+		else None
+	in
+	let cc =
+		if is_current_flag_set obj_decl_flag then
+			let aname = object_name::(get_package_from_file p.pfile) in
+			let aname = String.concat "." (List.rev aname) in
+			match cc with
+			| Some c ->
+				if cp<>[] then custom_error "No constraint parameter allowed in object declaration" p;
+				if c.cc_args<>[] then custom_error "No parameters allowed in object constructor" p;
+				let acl = APrivate::AInline::(List.filter(fun a -> a<>APublic) c.cc_al) in
+				let meta = (Meta.Allow,[mk_eident aname p],p)::c.cc_meta in
+				Some {c with cc_meta=meta; cc_al=acl; }
+			| _ ->
+				mk_cc [(Meta.Allow,[mk_eident aname p],p)] [APrivate; AInline] [] [] (mk_data())
+		else cc
 	in
 	push_cc cc;
 	cc
@@ -866,3 +923,44 @@ let merge_or_expr e =
 		pop_flag();
 		e
 	else e
+
+let is_static_allowed() = not (is_current_flag_set obj_decl_flag)
+
+let is_function_allowed name p1 custom_error s =
+	if is_current_flag_set obj_decl_flag then
+		match name with
+		| "new" ->
+			custom_error ("No constructor allowed in object declaration") p1;
+			false
+		| _ -> true
+	else true
+
+let is_extend_allowed p1 custom_error s = true
+	(*if is_current_flag_set obj_decl_flag then begin
+		custom_error ("You can't extend an object declaration") p1;
+		false
+	end else true*)
+
+let augment_decls pack decls =
+	let es = !ext_state in
+	if (List.length es.es_ofs) > 0 then
+		let p = (snd es.es_cd) in
+		let pname = (match List.rev (ExtString.String.nsplit p.pfile ".") with
+		| _::n::ns ->
+			let acc = (ExtString.String.nsplit n "/")@[object_name] in
+			List.map(fun n -> n,null_pos) acc
+		| _ -> [])
+		in
+		let decls = (EImport (pname,IAll), null_pos)::decls in
+		let ho = EClass {
+			d_name = object_name;
+			d_doc = None;
+			d_meta = [Meta.Final,[],null_pos];
+			d_params = [];
+			d_flags = [];
+			d_data = es.es_ofs;
+		}, p
+		in
+		pack, decls@[ho]
+	else
+		pack, decls
