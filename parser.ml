@@ -589,6 +589,7 @@ and parse_type_decls pack acc s =
 		| [< v = parse_type_decl; l = parse_type_decls pack (v :: acc) >] -> l
 		| [< >] -> List.rev acc
 	with TypePath ([],Some (name,false),b) ->
+		(*let _, acc = augment_decls pack acc in*)
 		(* resolve imports *)
 		List.iter (fun d ->
 			match fst d with
@@ -624,6 +625,10 @@ and parse_type_decl s =
 					pop_flag();
 					HPrivate::dflags
 				end else dflags
+			in
+			let meta = match cc with
+				| None -> meta
+				| _ -> (Meta.PublicFields,[],p1)::meta
 			in
 			pop_cc();
 			(EClass {

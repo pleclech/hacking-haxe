@@ -426,7 +426,7 @@ let update_cfs class_name occ fl p1 p2 = match occ with
 	| _ -> fl
 
 let add_object_def es n p =
-	let enew = ENew ({tparams=[];tsub=None;tname=n;tpackage=[]}, []), p in
+	let enew = ENew ({tparams=[];tsub=None;tname=n;tpackage=[]}, []), null_pos in
 	let cf =
 		{
 			cff_name = n;
@@ -434,7 +434,7 @@ let add_object_def es n p =
 			cff_access = [APublic; AStatic];
 			cff_doc = None;
 			cff_kind = FVar (None, Some enew);
-			cff_pos = p;
+			cff_pos = null_pos;
 		}
 	in
 	es.es_ofs <- cf::es.es_ofs
