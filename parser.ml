@@ -792,7 +792,7 @@ and parse_class_field_resume tdecl s =
 				junk_tokens (k - 1);
 				[]
 			(* type declaration *)
-			| Eof :: _ | Kwd Import :: _ | Kwd Using :: _ | Kwd Extern :: _ | Kwd Class :: _ | Kwd Interface :: _ | Kwd Enum :: _ | Kwd Typedef :: _ | Kwd Abstract :: _->
+			| Eof :: _ | Kwd Import :: _ | Kwd Using :: _ | Kwd Extern :: _ | Kwd Class :: _ | Const(Ident "object") :: _ | Kwd Interface :: _ | Kwd Enum :: _ | Kwd Typedef :: _ | Kwd Abstract :: _->
 				junk_tokens (k - 1);
 				[]
 			| [] ->
