@@ -739,10 +739,11 @@ let create_tuple ctx arity =
 			else loop (i-1) ((mk_arg i) ::acc)
 		in loop l []
 	in
-	let s_args ?(sfx="") n = String.concat "," (mk_args ~sfx:sfx n arity) in
+	let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_args ~sfx:sfx n arity) in
 	let params = s_args "T" in
 	let args = s_args ~sfx:":T" "val _" in
-	let s = Printf.sprintf "@:generic @:final class %s<%s> inline (%s) implements Tuple {\n" cn params args in
+	let s = Printf.sprintf "interface I%s<%s> extends Tuple {%s;}\n" cn params (s_args ~sfx:":T" ~sep:";" "val _") in
+	let s = s^(Printf.sprintf "@:generic @:final class %s<%s> inline (%s) implements I%s<%s> {\n" cn params args cn params) in
 	let body = ref [] in
 	body := (Printf.sprintf "public val arity=%d;" arity)::!body;
 	body := (Printf.sprintf "inline public def toString()='(%s)';" (s_args "$_"))::!body;
