@@ -1475,10 +1475,21 @@ and expr s =
 			| Some(POpen, _) -> hx s
 			| _ -> expr_next (ENew (t, []), p1) s
 		else hx s
-	| [< '(POpen,p1); _=open_par; e = expr; s >] -> (match s with parser
-		| [< '(PClose,p2); _=close_par; s >] -> parenthesis_or_type e (punion p1 p2) s
-		| [< t = parse_type_hint; e2 = checktype_or_short_lambda_args e t p1 >] -> e2
-		| [< s >] -> parse_tuple p1 e serror custom_error s)
+	| [< '(POpen,p1); s >] ->
+		begin match Stream.npeek 2 s with
+			| [(PClose, _); (t, p2)] when sl_is_allowed() && (t=Binop OpArrow || t=DblDot) ->
+				Stream.junk s;
+				parse_short_lambda_body [] [] (punion p1 p2) s
+			| _ ->
+				let _=open_par s in
+				begin match s with parser
+					| [< e = expr; s >] ->
+						(match s with parser
+						| [< '(PClose,p2); _=close_par; s >] -> parenthesis_or_type e (punion p1 p2) s
+						| [< t = parse_type_hint; e2 = checktype_or_short_lambda_args e t p1 >] -> e2
+						| [< s >] -> parse_tuple p1 e serror custom_error s)
+				end
+		end		
 	| [< '(BkOpen,p1); _=disallow_sl_without_parenthesis; l = parse_array_decl; '(BkClose,p2); _=allow_sl_without_parenthesis; s >] -> expr_next (EArrayDecl l, punion p1 p2) s
 	| [< '(Kwd Function,p1); e = parse_function p1 false; >] -> e
 	| [< '(Unop op,p1) when is_prefix op; e = expr >] -> make_unop op e p1
