@@ -8,6 +8,8 @@ type token_stream = (token*pos) Stream.t
 
 let warning : (string -> pos -> unit) ref = ref (fun _ _ -> assert false)
 
+let serror() = raise (Stream.Error "") 
+
 let replace input output =
     Str.global_replace (Str.regexp_string input) output
 
@@ -28,6 +30,7 @@ let parse_class_fields_ref:(bool -> pos -> token_stream -> class_field list*pos)
 let make_binop_ref:(binop -> expr -> expr -> expr)  ref = ref (fun _ _ _ -> assert false)
 let parse_call_params_ref:(expr -> token_stream -> expr list) ref = ref (fun _ _ -> assert false)
 let expr_ref:(token_stream -> expr) ref = ref (fun _ -> assert false)
+let secure_expr_ref:(token_stream -> expr) ref = ref (fun _ -> assert false)
 let expr_next_ref:(expr -> token_stream -> expr) ref = ref (fun _ _ -> assert false)
 let toplevel_expr_ref:(token_stream -> expr) ref = ref (fun _ -> assert false)
 let display_ref:(expr -> expr) ref = ref (fun _ -> assert false)
@@ -37,6 +40,7 @@ let load_instance_ref:(Typecore.typer -> type_path -> pos -> bool -> Type.t) ref
 let add_dependency_ref:(Type.module_def -> Type.module_def -> unit) ref = ref (fun _ _ -> assert false)
 let parse_var_decl_head_ref:(token_stream -> string * complex_type option * metadata) ref = ref (fun _ -> assert false)
 let parse_var_assignment_ref:(token_stream -> expr option) ref = ref (fun _ -> assert false)
+let parse_fun_param_ref:(token_stream -> string * bool * complex_type option * expr option * metadata) ref = ref (fun _ -> assert false)
 
 let mk_efield e n p = EField (e, n), p
 let mk_eblock b p = EBlock b, p
@@ -187,13 +191,17 @@ let pop_flag() = match (!ext_state).es_flags with
 		(!ext_state).es_flags <- xs;
 		ext_current_flag := x
 	| _ -> ext_current_flag := 0
+
 let set_and_push_flag f = push_flag (set_flag f !ext_current_flag)
 let clear_and_push_flag f = push_flag (clear_flag f !ext_current_flag)
 let is_current_flag_set f = is_flag_set f !ext_current_flag
+let set_current_flag f = ext_current_flag := (set_flag f !ext_current_flag)
+let clear_current_flag f = ext_current_flag := (clear_flag f !ext_current_flag)
 
 let inside_cc_flag = 1
 let pop_expr_flag = 2
-let obj_decl_flag = 4 
+let obj_decl_flag = 4
+let disallow_sl_flag = 8
 
 let empty_ext_symbol() = {ss_can_access_local=true; ss_depth=0; ss_table=Hashtbl.create 0; ss_redeclared_names=[[]]; }
 let default_ext_symbol = empty_ext_symbol()
@@ -768,12 +776,179 @@ let create_type_on_fly ctx tname error =
 		let (pack, decls), cn, p = create_tuple ctx.Typecore.com i in
 		(!type_module_with_decls_ref) ctx ([], cn) p.pfile decls p
 
-let rec parse_tuple_expr acc = parser
+let par_cnt = ref 0
+let par_cnt_stack = ref []
+let save_par_cnt() =
+	par_cnt_stack := !par_cnt::!par_cnt_stack;
+	par_cnt := 0
+let restore_par_cnt() = match !par_cnt_stack with
+	| x::xs ->
+		par_cnt_stack := xs;
+		par_cnt := x
+	| [] -> par_cnt := 0
+let open_par s = incr par_cnt
+let close_par s = decr par_cnt
+let sl_is_allowed() = (not (is_current_flag_set disallow_sl_flag)) || (!par_cnt >= 1)
+
+let make_short_lambda_expr pl al st p s =
+	let make e =
+			let pe = pos e in
+			let e = add_const_init al e in
+			let e = EBlock [e], pe in
+			let e = EReturn (Some e), pe in
+			let f = {
+				f_params = pl;
+				f_type = st;
+				f_args = al;
+				f_expr = Some e;
+			} in
+			EFunction (None, f), punion p pe
+	in
+	try
+		(!expr_next_ref) (make ((!secure_expr_ref) s)) s
+	with
+		Display e -> raise (Display (make e))
+
+let parse_short_lambda_body pl al p = parser
+	| [< st = !parse_type_opt_ref; '(Binop OpArrow, _); s >] -> make_short_lambda_expr pl al st p s
+
+let parse_short_lambda_args pl args p1 s =
+	match s with parser
+	| [< '(Comma, _); s >] ->
+		let rec loop acc = match s with parser
+		| [< arg=(!parse_fun_param_ref); s >] ->
+			(match s with parser
+			| [< '(PClose, _); _=close_par; s >] ->
+				let args = List.rev (arg::acc) in
+				parse_short_lambda_body pl args p1 s
+			| [< '(Comma, _) >] -> loop (arg::acc))
+		| [< >] -> serror()
+		in loop args
+
+let checktype_or_short_lambda_args e t p1 = parser
+	| [< '(PClose, p2); _=close_par; s >] ->
+		let hx() = (!expr_next_ref) (EParenthesis (ECheckType(e, t),punion p1 p2), punion p1 p2) s in
+		if !use_extended_syntax && sl_is_allowed() then
+			match Stream.peek s with
+			| Some (Binop OpArrow, _) | Some (DblDot, _) ->
+				(match e with
+				| EConst (Ident n), _ ->
+					let args = [n, false, Some t, None, []] in
+					parse_short_lambda_body [] args p1 s
+				| _ -> hx())
+			| _ -> hx()
+		else hx()
+	| [< s >] ->
+		if !use_extended_syntax then
+			match e with
+			| EConst(Ident n), _ when sl_is_allowed() -> parse_short_lambda_args [] [(n, false, Some t, None, [])] p1 s 
+			| _ -> serror()
+		else
+			serror()
+
+let maybe_short_lambda e p s = match e with
+	| EParenthesis (EConst(Ident n), _), _ when sl_is_allowed() -> make_short_lambda_expr [] [(n, false, None, None, [])] None p s
+	| _ -> serror()
+
+
+let rec expr_to_fun_arg meta acc = function
+	| EConst (Ident n), _ -> (n, false, None, None, meta)::acc
+	| EVars [n, ot, oe, m], _ -> (n, false, ot, oe, (List.rev_append m meta))::acc
+	| EParenthesis e, _ -> expr_to_fun_arg meta acc e
+	| EMeta((name, params, pm), e), _ -> expr_to_fun_arg ((name, params, pm)::meta) acc e
+	| _ -> []
+
+let binop_or_short_lambda op e1 e2 =
+	let mk_binop() = (!make_binop_ref) op e1 e2 in
+	let mk_fun pl al st =
+			let pe = pos e2 in
+			let e = add_const_init al e2 in
+			let e = EBlock [e], pe in
+			let e = EReturn (Some e), pe in
+			let f = {
+				f_params = pl;
+				f_type = st;
+				f_args = al;
+				f_expr = Some e;
+			} in
+			EFunction (None, f), punion (pos e1) pe
+	in
+	match  op with
+	| OpArrow when !use_extended_syntax && sl_is_allowed() ->
+		let args = expr_to_fun_arg [] [] e1 in
+		if args=[] then mk_binop()
+		else mk_fun [] args None
+	| _ -> mk_binop()
+
+let empty_var = ("", None, None, [])
+
+let rec expr_to_var meta ot = function
+	| EConst (Ident n), _ -> n, ot, None, meta
+	| EMeta ((n, pms, p), e), _ -> expr_to_var ((n, pms, p)::meta) ot e
+	| _ -> empty_var
+
+let parenthesis_or_type e p s =
+	let expr() = (!expr_next_ref) (EParenthesis e, p) s in
+	if !use_extended_syntax && sl_is_allowed() then
+		match Stream.peek s with
+		| Some (DblDot, _) ->
+			begin match (!parse_type_opt_ref) s with
+					| Some t -> (!expr_next_ref) (ECheckType (e, t), p) s
+					| _ -> expr()
+			end
+		| _ -> expr()
+	else expr()
+
+let type_or_nothing e s =
+	if !use_extended_syntax && sl_is_allowed() then
+		match Stream.peek s with
+		| Some (DblDot, _) ->
+			let (vn, vot, voe, vm) =expr_to_var [] None e in
+			if vn="" then e
+			else
+				begin match (!parse_type_opt_ref) s with
+					| (Some t) as ot -> EVars [vn, ot, None, vm], pos e
+					| _ -> e
+				end
+		| _ -> e
+	else e
+
+let rec parse_tuple_expr acc s =
+	let mk_block lst =
+		let lst = List.rev lst in
+		EBlock lst, pos (List.hd lst)
+	in
+	match s with parser
 	| [< e = (!expr_ref); s >] ->
-		(match s with parser
-		| [< '(Comma,_); l = parse_tuple_expr (e::acc) >] -> l
-		| [< >] -> e::acc)
-	| [< >] -> acc
+		begin match s with parser
+			| [< '(Comma, _); l = parse_tuple_expr (e::acc) >] -> l
+			| [< >] ->
+				begin match Stream.peek s with
+					| Some (DblDot, _) ->
+						begin match e with
+							| EConst(Ident n), _ ->
+								let st = (!parse_type_opt_ref) s in
+								begin match st with
+									 | Some t ->
+									 	let acc = List.map (fun e -> match e with
+										 	| EConst(Ident n), _ -> (n, false, None, None, [])
+										 	| _ -> serror()) acc
+									 	in
+									 	let acc = (n, false, st, None, [])::acc in
+									 	(match Stream.peek s with
+									 	| Some (PClose, _) ->
+									 		Stream.junk s;
+									 		let args = List.rev acc in
+											parse_short_lambda_body [] args (pos e) s
+										| _ -> parse_short_lambda_args [] acc (pos e) s)
+									 | _ -> mk_block (e::acc)
+								end
+							| _ -> mk_block (e::acc)
+						end
+					| _ -> mk_block (e::acc)
+				end
+		end
+	| [< >] -> mk_block acc
 
 let tuple_or_enew t al p custom_error s =
 	let next() = (!expr_next_ref) (ENew (t,al), p) s in
@@ -812,12 +987,24 @@ let tuple_or_enew t al p custom_error s =
 let parse_tuple p1 e error custom_error s =
 	if !use_extended_syntax then match s with parser
 		| [< '(Comma, _); es=parse_tuple_expr [e]; s >] -> 
-			(match s with parser
-			| [<' (PClose,p2); s>] ->
-				let cnt = List.length es in
-				let t = mk_type [] (mk_tuple_name cnt) [] None in
-					tuple_or_enew t (List.rev es) (punion p1 p2) custom_error s
-			| [< >] -> error())
+			(match es with
+			| EBlock es, _ ->
+				(match s with parser
+				| [<' (PClose,p2); _=close_par; s>] ->
+					begin match Stream.peek s with
+						| Some (Binop OpArrow, _) | Some (DblDot, _) when sl_is_allowed() ->
+							let args = List.map (fun e -> match e with
+								| EConst(Ident n), _ -> (n, false, None, None, [])
+								| _ -> serror()) es
+							in
+							parse_short_lambda_body [] args p1 s
+						| _ ->
+							let cnt = List.length es in
+							let t = mk_type [] (mk_tuple_name cnt) [] None in
+							tuple_or_enew t (List.rev es) (punion p1 p2) custom_error s
+					end
+				| [< >] -> error())
+			| _ -> es)
 		| [< >] -> error()
 	else error()
 
@@ -860,7 +1047,7 @@ let parse_tuple_deconstruct ?(is_const=false) custom_error = parser
 				| _, p ->
 					let vn = fresh_name "__td" in
 					insert_exprs ~with_semi:false [(EVars [vn, None, sae, [Meta.Const, [], pae] ], p)];
-					push_flag pop_expr_flag;
+					set_and_push_flag pop_expr_flag;
 					mk_eident vn p
 			in
 			List.map (fun (n,t,i,m) ->
@@ -968,3 +1155,10 @@ let augment_decls pack decls =
 
 let set_package pack s =
 	(!ext_state).es_pkg = pack
+
+let disallow_sl_without_parenthesis s =
+	save_par_cnt();
+	set_and_push_flag disallow_sl_flag
+let allow_sl_without_parenthesis s =
+	restore_par_cnt();
+	pop_flag()

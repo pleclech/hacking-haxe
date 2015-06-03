@@ -846,7 +846,7 @@ and parse_class_flags ?(allow_object=false) = parser
 	| [< '(Kwd Class,p) >] -> [] , p
 	| [< '(Kwd Interface,p) >] -> [HInterface] , p
 	| [< '(Const (Ident "object"), p) when allow_object >] ->
-		push_flag obj_decl_flag;
+		set_and_push_flag obj_decl_flag;
 		[], p
 
 and parse_type_hint = parser
@@ -1475,11 +1475,11 @@ and expr s =
 			| Some(POpen, _) -> hx s
 			| _ -> expr_next (ENew (t, []), p1) s
 		else hx s
-	| [< '(POpen,p1); e = expr; s >] -> (match s with parser
-		| [< '(PClose,p2); s >] -> expr_next (EParenthesis e, punion p1 p2) s
-		| [< t = parse_type_hint; '(PClose,p2); s >] -> expr_next (EParenthesis (ECheckType(e,t),punion p1 p2), punion p1 p2) s
+	| [< '(POpen,p1); _=open_par; e = expr; s >] -> (match s with parser
+		| [< '(PClose,p2); _=close_par; s >] -> parenthesis_or_type e (punion p1 p2) s
+		| [< t = parse_type_hint; e2 = checktype_or_short_lambda_args e t p1 >] -> e2
 		| [< s >] -> parse_tuple p1 e serror custom_error s)
-	| [< '(BkOpen,p1); l = parse_array_decl; '(BkClose,p2); s >] -> expr_next (EArrayDecl l, punion p1 p2) s
+	| [< '(BkOpen,p1); _=disallow_sl_without_parenthesis; l = parse_array_decl; '(BkClose,p2); _=allow_sl_without_parenthesis; s >] -> expr_next (EArrayDecl l, punion p1 p2) s
 	| [< '(Kwd Function,p1); e = parse_function p1 false; >] -> e
 	| [< '(Unop op,p1) when is_prefix op; e = expr >] -> make_unop op e p1
 	| [< '(Binop OpSub,p1); e = expr >] ->
@@ -1622,17 +1622,17 @@ and expr_next e1 = parser
 	| [< '(Binop op,_); s >] ->
 		(try
 			(match s with parser
-			| [< e2 = expr >] -> make_binop op e1 e2
+			| [< e2 = expr >] -> binop_or_short_lambda op e1 e2
 			| [< >] -> serror())
 		with Display e2 ->
-			raise (Display (make_binop op e1 e2)))
+			raise (Display (binop_or_short_lambda op e1 e2)))
 	| [< '(Unop op,p) when is_postfix e1 op; s >] ->
 		expr_next (EUnop (op,Postfix,e1), punion (pos e1) p) s
-	| [< '(Question,_); e2 = expr; '(DblDot,_); e3 = expr >] ->
+	| [< '(Question,_); _=disallow_sl_without_parenthesis; e2 = expr; '(DblDot,_); _=allow_sl_without_parenthesis; e3 = expr >] ->
 		(ETernary (e1,e2,e3),punion (pos e1) (pos e3))
 	| [< '(Kwd In,_); e2 = expr >] ->
 		(EIn (e1,e2), punion (pos e1) (pos e2))
-	| [< >] -> e1
+	| [< s >] -> e1
 
 and parse_guard = parser
 	| [< '(Kwd If,p1); '(POpen,_); e = expr; '(PClose,_); >] ->
@@ -1917,8 +1917,10 @@ parse_class_fields_ref := parse_class_fields;
 make_binop_ref := make_binop;
 parse_call_params_ref := parse_call_params;
 expr_ref := expr;
+secure_expr_ref := secure_expr;
 expr_next_ref := expr_next;
 toplevel_expr_ref := toplevel_expr;
 display_ref := display;
 parse_var_decl_head_ref := parse_var_decl_head;
 parse_var_assignment_ref := parse_var_assignment;
+parse_fun_param_ref := parse_fun_param;
