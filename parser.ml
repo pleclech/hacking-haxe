@@ -1589,19 +1589,30 @@ and expr_next e1 = parser
 		| EConst(Ident n) -> expr_next (EMeta((Common.MetaInfo.from_string n,[],snd e1),eparam), punion p1 p2) s
 		| _ -> assert false)
 	| [< '(NullCheck,p); s >] ->
-		if is_resuming p then display (EDisplay (e1,false),p);
+		(if is_resuming p then
+			let e1 = match fst e1 with
+				| EMeta ((Meta.Custom ":display", [ed], _), _) -> ed
+				| _ -> e1
+			in
+			display (EDisplay (e1,false),p));
 		let pe1 = pos e1 in
 		let mk_nc2 n p s =
 			let in_nc = is_current_flag_set null_check_flag in
 			set_and_push_flag null_check_flag;
 			let pe = punion pe1 p in
 			let enull = mk_enull pe in
+			let e1, disp = match fst e1 with
+				| EMeta ((Meta.Custom ":display", [ed], _), e1) -> e1, mk_efield ed n pe 
+				| _ -> e1, mk_efield e1 n pe
+			in
 			let ef = mk_efield (mk_eident "__nc" pe) n pe in
 			let ev = EVars ["__nc", None, Some e1, []], pe in
 			let ec = (make_binop OpNotEq  (mk_eident "__nc" pe) enull) in
 			let tc =
 				match Stream.peek s with
-				| Some (NullCheck, _) ->  (expr_next ef s)
+				| Some (NullCheck, _) ->
+					let ef = EMeta ((Meta.Custom ":display", [disp], pe), ef), pe in
+					expr_next ef s
 				| _ ->
 					(*set_and_push_flag exit_null_check_flag;*)
 					make_binop OpAssign (mk_eident "__rnc" pe) ef
