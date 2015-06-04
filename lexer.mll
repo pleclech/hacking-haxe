@@ -278,6 +278,7 @@ and token = parse
 	| "->" { mk lexbuf Arrow }
 	| "..." { mk lexbuf (Binop OpInterval) }
 	| "=>" { mk lexbuf (Binop OpArrow)}
+	| "?." { mk lexbuf NullCheck }
 	| "!" { mk lexbuf (Unop Not) }
 	| "<" { mk lexbuf (Binop OpLt) }
 	| ">" { mk lexbuf (Binop OpGt) }

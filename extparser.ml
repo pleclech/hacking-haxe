@@ -56,6 +56,7 @@ let mk_ethis_assign fn pfn =
 	mk_eassign e_this (mk_eident fn pfn)
 let mk_emergeblock blk p =
 	EMeta((Meta.MergeBlock, [], p), (EBlock blk, p)), p
+let mk_enull p = (EConst (Ident "null"),p)
 
 type 'a stream_state_t = {
 	mutable ss_q: 'a Queue.t; (* priority queue *)
@@ -202,6 +203,7 @@ let inside_cc_flag = 1
 let pop_expr_flag = 2
 let obj_decl_flag = 4
 let disallow_sl_flag = 8
+let null_check_flag = 16
 
 let empty_ext_symbol() = {ss_can_access_local=true; ss_depth=0; ss_table=Hashtbl.create 0; ss_redeclared_names=[[]]; }
 let default_ext_symbol = empty_ext_symbol()

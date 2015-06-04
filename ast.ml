@@ -292,6 +292,7 @@ type token =
 	| POpen
 	| PClose
 	| Dot
+	| NullCheck
 	| DblDot
 	| Arrow
 	| IntInterval of string
@@ -332,7 +333,7 @@ and func = {
 	f_params : type_param list;
 	f_args : (string * bool * complex_type option * expr option * metadata) list;
 	f_type : complex_type option;
-	f_expr : expr option;
+	mutable f_expr : expr option;
 }
 
 and expr_def =
@@ -629,6 +630,7 @@ let s_token = function
 	| POpen -> "("
 	| PClose -> ")"
 	| Dot -> "."
+	| NullCheck -> "?."
 	| DblDot -> ":"
 	| Arrow -> "->"
 	| IntInterval s -> s ^ "..."

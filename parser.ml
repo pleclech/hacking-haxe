@@ -1281,7 +1281,7 @@ and parse_block_elt = parser
 	| [< '(Kwd Var,p1); vl = parse_var_decls p1; p2 = semicolon >] -> merge_or_expr (EVars vl,punion p1 p2)
 	| [< '(Kwd Inline,p1); '(Kwd Function,_); e = parse_function p1 true; _ = semicolon >] -> e
 	| [< vl,p1 = parse_consts_expr; p2 = semicolon >] -> merge_or_expr (EVars vl,punion p1 p2)
-	| [< e = expr; _ = semicolon >] -> e
+	| [< e = expr; _ = semicolon >] -> merge_or_expr e
 
 and parse_obj_decl = parser
 	| [< '(Comma,_); s >] ->
@@ -1588,6 +1588,51 @@ and expr_next e1 = parser
 		(match fst e1 with
 		| EConst(Ident n) -> expr_next (EMeta((Common.MetaInfo.from_string n,[],snd e1),eparam), punion p1 p2) s
 		| _ -> assert false)
+	| [< '(NullCheck,p); s >] ->
+		if is_resuming p then display (EDisplay (e1,false),p);
+		let pe1 = pos e1 in
+		let mk_nc2 n p s =
+			let in_nc = is_current_flag_set null_check_flag in
+			set_and_push_flag null_check_flag;
+			let pe = punion pe1 p in
+			let enull = mk_enull pe in
+			let ef = mk_efield (mk_eident "__nc" pe) n pe in
+			let ev = EVars ["__nc", None, Some e1, []], pe in
+			let ec = (make_binop OpNotEq  (mk_eident "__nc" pe) enull) in
+			let tc =
+				match Stream.peek s with
+				| Some (NullCheck, _) ->  (expr_next ef s)
+				| _ ->
+					(*set_and_push_flag exit_null_check_flag;*)
+					make_binop OpAssign (mk_eident "__rnc" pe) ef
+			in
+			pop_flag();
+			let eif = EIf (ec, tc, None), pe in
+			let e =
+				let eb = EBlock [ev;eif], pe in
+				if in_nc then eb
+				else
+					let ev = EVars ["__rnc", None, Some enull, []], pe in
+					let eb = EBlock [ev;eb;(mk_eident "__rnc" pe)], pe in
+					let vn = fresh_name "__tmp" in
+					let re = expr_next (mk_eident vn pe) s in
+					insert_exprs ~with_semi:false [EVars [vn, None, Some eb, []], pe];
+					set_and_push_flag pop_expr_flag;
+					re
+			in
+			e
+		in
+		(match s with parser
+		| [< '(Kwd Macro,p2) when p.pmax = p2.pmin; s >] -> mk_nc2 "macro" p2 s
+		| [< '(Kwd New,p2) when p.pmax = p2.pmin; s >] -> mk_nc2 "new" p2 s
+		| [< '(Kwd Val,p2) when p.pmax = p2.pmin; s >] -> mk_nc2 "val" p2 s
+		| [< '(Kwd KConst,p2) when p.pmax = p2.pmin; s >] -> mk_nc2 "const" p2 s
+		| [< '(Kwd Def,p2) when p.pmax = p2.pmin; s >] -> mk_nc2 "def" p2 s
+		| [< '(Const (Ident f),p2) when p.pmax = p2.pmin; s >] -> mk_nc2 f p2 s
+		| [< '(Dollar v,p2); s >] -> mk_nc2 ("$"^v) p2 s
+		| [< '(Binop OpOr,p2) when do_resume() >] ->
+			set_resume p;
+			display (EDisplay (e1,false),p) (* help for debug display mode *))
 	| [< '(Dot,p); s >] ->
 		if is_resuming p then display (EDisplay (e1,false),p);
 		(match s with parser
