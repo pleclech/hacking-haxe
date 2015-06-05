@@ -1614,7 +1614,6 @@ and expr_next e1 = parser
 					let ef = EMeta ((Meta.Custom ":display", [disp], pe), ef), pe in
 					expr_next ef s
 				| _ ->
-					(*set_and_push_flag exit_null_check_flag;*)
 					make_binop OpAssign (mk_eident "__rnc" pe) ef
 			in
 			pop_flag();
@@ -1626,10 +1625,9 @@ and expr_next e1 = parser
 					let ev = EVars ["__rnc", None, Some enull, []], pe in
 					let eb = EBlock [ev;eb;(mk_eident "__rnc" pe)], pe in
 					let vn = fresh_name "__tmp" in
-					let re = expr_next (mk_eident vn pe) s in
-					insert_exprs ~with_semi:false [EVars [vn, None, Some eb, []], pe];
+					insert_block_exprs ~with_semi:false [EVars [vn, None, Some eb, []], pe];
 					set_and_push_flag pop_expr_flag;
-					re
+					expr_next (mk_eident vn pe) s
 			in
 			e
 		in
@@ -1699,6 +1697,27 @@ and expr_next e1 = parser
 		(ETernary (e1,e2,e3),punion (pos e1) (pos e3))
 	| [< '(Kwd In,_); e2 = expr >] ->
 		(EIn (e1,e2), punion (pos e1) (pos e2))
+	| [< '(Coalesce, p); e2 = expr >] ->
+		let pe1 = pos e1 in
+		let mk_tst rvn vn e2 =
+			let ev = EVars [vn, None, Some e1, []], pe1 in
+			let eid = mk_eident vn pe1 in
+			let ec = make_binop OpEq eid (mk_enull pe1) in
+			let tc = make_binop OpAssign eid e2 in
+			let eif = EIf (ec, tc, None), pe1 in
+			let eb = EBlock [ev; eif; eid], pe1 in
+			insert_block_exprs ~with_semi:false [EVars [rvn, None, Some eb, []], pe1];
+			set_and_push_flag pop_expr_flag;
+		in
+		let rvn = fresh_name "__cl" in
+		let rvid = mk_eident rvn (punion pe1 (pos e2)) in
+		(match e2 with
+		| EBinop (op, el, er), p ->
+			mk_tst rvn "__nc" el;
+			make_binop op rvid er
+		| _ ->
+			mk_tst rvn "__nc" e2;
+			rvid)
 	| [< s >] -> e1
 
 and parse_guard = parser

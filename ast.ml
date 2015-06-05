@@ -293,6 +293,7 @@ type token =
 	| PClose
 	| Dot
 	| NullCheck
+	| Coalesce
 	| DblDot
 	| Arrow
 	| IntInterval of string
@@ -631,6 +632,7 @@ let s_token = function
 	| PClose -> ")"
 	| Dot -> "."
 	| NullCheck -> "?."
+	| Coalesce -> "??"
 	| DblDot -> ":"
 	| Arrow -> "->"
 	| IntInterval s -> s ^ "..."

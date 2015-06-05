@@ -154,6 +154,7 @@ type class_constructor_t = {
 }
 
 type ext_state_t = {
+	mutable es_block_exprs:expr Queue.t;
 	mutable es_exprs:expr Queue.t;
 	mutable es_for_ctx:expr option list;
 	mutable es_cfs:class_field Queue.t;
@@ -166,7 +167,7 @@ type ext_state_t = {
 }
 
 let ext_current_flag = ref 0
-let empty_ext_state() = {es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; es_uid=0; es_ofs=[]; es_cd="",null_pos; es_pkg=[]}
+let empty_ext_state() = {es_block_exprs=Queue.create(); es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; es_uid=0; es_ofs=[]; es_cd="",null_pos; es_pkg=[]}
 
 let ext_states = ref []
 
@@ -260,8 +261,17 @@ let insert_exprs ?(with_semi=true) (es:expr list) =
 		in
 		List.iter insert es
 
+let insert_block_exprs ?(with_semi=true) (es:expr list) =
+		let q = (!ext_state).es_block_exprs in
+		let insert e =
+			Queue.push e q;
+			if with_semi then insert_token [Semicolon, pos e]
+		in
+		List.iter insert es
+
 let is_expr_available() = not (Queue.is_empty (!ext_state).es_exprs)
 let pop_expr() = Queue.pop (!ext_state).es_exprs
+let pop_block_expr() = Queue.pop (!ext_state).es_block_exprs
 
 let insert_cf (cf:class_field) = Queue.push cf (!ext_state).es_cfs
 let is_cf_available() = not (Queue.is_empty (!ext_state).es_cfs)
@@ -1048,7 +1058,7 @@ let parse_tuple_deconstruct ?(is_const=false) custom_error = parser
 				| EConst (Ident _), p -> ae
 				| _, p ->
 					let vn = fresh_name "__td" in
-					insert_exprs ~with_semi:false [(EVars [vn, None, sae, [Meta.Const, [], pae] ], p)];
+					insert_block_exprs ~with_semi:false [(EVars [vn, None, sae, [Meta.Const, [], pae] ], p)];
 					set_and_push_flag pop_expr_flag;
 					mk_eident vn p
 			in
@@ -1111,12 +1121,18 @@ let tuple_or_ecall e params p custom_error s =
 	else next()
 
 let merge_or_expr e =
-	if is_current_flag_set pop_expr_flag then
-		let e2 = pop_expr() in
-		let e = mk_emergeblock [e2; e] (punion (pos e2) (pos e)) in
-		pop_flag();
-		e
-	else e
+	let p = ref (pos e) in
+	let rec loop acc =
+		if is_current_flag_set pop_expr_flag then
+			let e = pop_block_expr() in
+			p := punion !p (pos e);
+			pop_flag();
+			loop (e::acc)
+		else List.rev (e::acc)
+	in
+	match loop [] with
+	| [e] -> e
+	| xs -> mk_emergeblock xs (punion !p (pos e))	
 
 let is_static_allowed() = not (is_current_flag_set obj_decl_flag)
 
