@@ -160,6 +160,9 @@ type context = {
 	
 	(* extended syntax *)
 	mutable use_extended_syntax : bool;
+
+	(* disable generic*)
+	mutable no_generic : bool;
 }
 
 exception Abort of string * Ast.pos
@@ -219,6 +222,7 @@ module Define = struct
 		| NoDeprecationWarnings
 		| NoFlashOverride
 		| NoDebug
+		| NoGeneric
 		| NoInline
 		| NoOpt
 		| NoPatternMatching
@@ -330,6 +334,7 @@ module Define = struct
 		| Sys -> ("sys","Defined for all system platforms")
 		| Unsafe -> ("unsafe","Allow unsafe code when targeting C#")
 		| UseExtendedSyntax -> ("use_extended_syntax","Allow new syntax addition to be parsed in all file not only .ehx")
+		| NoGeneric -> ("no_generic","Disable globally generic tranformation, can be force locally with @:force_generic")
 		| UseNekoc -> ("use_nekoc","Use nekoc compiler instead of internal one")
 		| UseRttiDoc -> ("use_rtti_doc","Allows access to documentation during compilation")
 		| Vcproj -> ("vcproj","GenCPP internal")
@@ -411,6 +416,7 @@ module MetaInfo = struct
 		| FunctionCode -> ":functionCode",("",[Platform Cpp])
 		| FunctionTailCode -> ":functionTailCode",("",[Platform Cpp])
 		| Generic -> ":generic",("Marks a class or class field as generic so each type parameter combination generates its own type/field",[UsedOnEither [TClass;TClassField]])
+		| ForceGeneric -> ":force_generic",("Marks a class or class field to be generic when global flag no_generic is defined",[UsedOnEither [TClass;TClassField]])
 		| GenericBuild -> ":genericBuild",("Builds instances of a type using the specified macro",[UsedOn TClass])
 		| GenericInstance -> ":genericInstance",("Internally used to mark instances of @:generic methods",[UsedOn TClassField;Internal])
 		| Getter -> ":getter",("Generates a native getter function on the given field",[HasParam "Class field name";UsedOn TClassField;Platform Flash])
@@ -755,6 +761,7 @@ let create v args =
 		stored_typed_exprs = PMap.empty;
 		memory_marker = memory_marker;
 		use_extended_syntax = false;
+		no_generic = false;
 	}
 
 let log com str =
@@ -1086,3 +1093,9 @@ let float_repres f =
 			if f = float_of_string s2 then s2 else
 			Printf.sprintf "%.18g" f
 		in valid_float_lexeme float_val
+
+let has_generic com meta =
+	if defined com Define.NoGeneric then
+		Meta.has Meta.ForceGeneric meta
+	else
+		Meta.has Meta.Generic meta || Meta.has Meta.ForceGeneric meta

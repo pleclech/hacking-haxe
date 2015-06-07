@@ -1059,7 +1059,7 @@ let is_generic_parameter ctx c =
 	(* first check field parameters, then class parameters *)
 	try
 		ignore (List.assoc (snd c.cl_path) ctx.curfield.cf_params);
-		Meta.has Meta.Generic ctx.curfield.cf_meta
+		has_generic ctx.com ctx.curfield.cf_meta
 	with Not_found -> try
 		ignore(List.assoc (snd c.cl_path) ctx.type_params);
 		(match ctx.curclass.cl_kind with | KGeneric -> true | _ -> false);
@@ -2187,7 +2187,7 @@ let init_class ctx c p context_init herits fields =
 		| FFun fd ->
 			let params = type_function_params ctx fd f.cff_name p in
 			if inline && c.cl_interface then error (f.cff_name ^ ": You can't declare inline methods in interfaces") p;
-			if Meta.has Meta.Generic f.cff_meta then begin
+			if has_generic ctx.com f.cff_meta then begin
 				if params = [] then error (f.cff_name ^ ": Generic functions must have type parameters") p;
 			end;
 			let is_macro = is_macro || (is_class_macro && stat) in
@@ -2859,7 +2859,7 @@ let rec init_module_type ctx context_init do_init (decl,p) =
 		let c = (match get_type d.d_name with TClassDecl c -> c | _ -> assert false) in
 		check_global_metadata ctx (fun m -> c.cl_meta <- m :: c.cl_meta) c.cl_module.m_path c.cl_path None;
 		let herits = d.d_flags in
-		if Meta.has Meta.Generic c.cl_meta && c.cl_params <> [] then c.cl_kind <- KGeneric;
+		if has_generic ctx.com c.cl_meta && c.cl_params <> [] then c.cl_kind <- KGeneric;
 		if Meta.has Meta.GenericBuild c.cl_meta then c.cl_kind <- KGenericBuild d.d_data;
 		if c.cl_path = (["haxe";"macro"],"MacroType") then c.cl_kind <- KMacroType;
 		c.cl_extern <- List.mem HExtern herits;

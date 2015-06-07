@@ -84,6 +84,7 @@ module Meta = struct
 		| FunctionCode
 		| FunctionTailCode
 		| Generic
+		| ForceGeneric
 		| GenericBuild
 		| GenericInstance
 		| Getter

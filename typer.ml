@@ -238,7 +238,7 @@ let field_type ctx c pl f p =
 	| [] -> f.cf_type
 	| l ->
 		let monos = List.map (fun _ -> mk_mono()) l in
-		if not (Meta.has Meta.Generic f.cf_meta) then add_constraint_checks ctx c.cl_params pl f monos p;
+		if not (has_generic ctx.com f.cf_meta) then add_constraint_checks ctx c.cl_params pl f monos p;
 		apply_params l monos f.cf_type
 
 let class_field ctx c tl name p =
@@ -1153,7 +1153,7 @@ let field_access ctx mode f fmode t e p =
 			| MethMacro, MCall -> AKMacro (e,f)
 			| _ , MGet ->
 				let cmode = (match fmode with
-					| FInstance(_, _, cf) | FStatic(_, cf) when Meta.has Meta.Generic cf.cf_meta -> display_error ctx "Cannot create closure on generic function" p; fmode
+					| FInstance(_, _, cf) | FStatic(_, cf) when has_generic ctx.com cf.cf_meta -> display_error ctx "Cannot create closure on generic function" p; fmode
 					| FInstance (c,tl,cf) -> FClosure (Some (c,tl),cf)
 					| FStatic _ | FEnum _ -> fmode
 					| FAnon f -> FClosure (None, f)
@@ -1882,7 +1882,7 @@ let unify_int ctx e k =
 			cf2.cf_kind <- cf.cf_kind;
 			cf2.cf_public <- cf.cf_public;
 			let metadata = List.filter (fun (m,_,_) -> match m with
-				| Meta.Generic -> false
+				| Meta.Generic | Meta.ForceGeneric -> false
 				| _ -> true
 			) cf.cf_meta in
 			cf2.cf_meta <- (Meta.NoCompletion,[],p) :: (Meta.NoUsing,[],p) :: (Meta.GenericInstance,[],p) :: metadata;
@@ -4011,7 +4011,7 @@ and build_call ctx acc el (with_type:with_type) p =
 				er,fun () -> ctx.this_stack <- List.tl ctx.this_stack
 	in
 	match acc with
- 	| AKInline (ethis,f,fmode,t) when Meta.has Meta.Generic f.cf_meta ->
+ 	| AKInline (ethis,f,fmode,t) when has_generic ctx.com f.cf_meta ->
 		type_generic_function ctx (ethis,fmode) el with_type p
 	| AKInline (ethis,f,fmode,t) ->
 		(match follow t with
@@ -4021,7 +4021,7 @@ and build_call ctx acc el (with_type:with_type) p =
 			| _ ->
 				error (s_type (print_context()) t ^ " cannot be called") p
 		)
-	| AKUsing (et,cl,ef,eparam) when Meta.has Meta.Generic ef.cf_meta ->
+	| AKUsing (et,cl,ef,eparam) when has_generic ctx.com ef.cf_meta ->
 		(match et.eexpr with
 		| TField(ec,fa) ->
 			type_generic_function ctx (ec,fa) el ~using_param:(Some eparam) with_type p
@@ -4118,7 +4118,7 @@ and build_call ctx acc el (with_type:with_type) p =
 			begin match e.eexpr with
 				| TField(e1,fa) when not (match fa with FEnum _ -> true | _ -> false) ->
 					begin match fa with
-						| FInstance(_,_,cf) | FStatic(_,cf) when Meta.has Meta.Generic cf.cf_meta ->
+						| FInstance(_,_,cf) | FStatic(_,cf) when has_generic ctx.com cf.cf_meta ->
 							type_generic_function ctx (e1,fa) el with_type p
 						| _ ->
 							let _,_,mk_call = unify_field_call ctx fa el args r p false in
