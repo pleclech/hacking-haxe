@@ -574,7 +574,7 @@ let rec	parse_file s =
 	let pack, decls =
 		match s with parser
 		| [< '(Kwd Package,_); pack = parse_package; s >] ->
-			set_package pack s;
+			ignore(set_package pack s);
 			begin match s with parser
 			| [< '(Const(Ident _),p) when pack = [] >] -> error (Custom "Package name must start with a lowercase character") p
 			| [< _ = semicolon; l = parse_type_decls pack []; '(Eof,_) >] -> pack , l
@@ -1372,7 +1372,9 @@ and parse_macro_expr p = parser
 	| [< e = secure_expr >] ->
 		reify_expr e
 
-and parse_function p1 inl = parser
+and parse_function ?(flags=0) p1 inl s =
+	push_flag flags;
+	match s with parser
 	| [< name = popt dollar_ident; pl = parse_constraint_params; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
 		let make e =
 			let f = {
@@ -1384,9 +1386,18 @@ and parse_function p1 inl = parser
 			EFunction ((match name with None -> None | Some (name,_) -> Some (if inl then "inline_" ^ name else name)),f), punion p1 (pos e)
 		in
 		(try
-			expr_next (make (secure_expr s)) s
+			let e = expr_next (make (secure_expr s)) s
+			in
+			pop_flag();
+			e
 		with
-			Display e -> display (make e))
+			| Display e ->
+				pop_flag(); 
+				display (make e)
+			| e ->
+				pop_flag();
+				raise e)
+
 
 and parse_const_expr s =
 	let sp = const_pos s in
@@ -1421,13 +1432,13 @@ and parse_for_init s =
 			in e, efor
 	else (expr s), true
 
-and expr s =
+and expr ?(flags=0) s =
 	let enter_scope s = enter_new_scope None in
 	let leave_scope s = leave_scope None in
 	let hx s = match s with parser
 	| [< (name,params,p) = parse_meta_entry; s >] ->
 		(try
-			make_meta name params (secure_expr s) p
+			make_meta name params (secure_expr ~flags:(update_flags_from_meta name flags) s) p
 		with Display e ->
 			display (make_meta name params e p))
 	| [< '(BrOpen,p1); _=enter_scope; b = block1; '(BrClose,p2); _=leave_scope; s >] ->
@@ -1824,9 +1835,9 @@ and toplevel_expr s =
 	with
 		Display e -> e
 
-and secure_expr s =
+and secure_expr ?(flags=0) s =
 	match s with parser
-	| [< e = expr >] -> e
+	| [< e = expr ~flags:flags >] -> e
 	| [< >] -> serror()
 
 (* eval *)

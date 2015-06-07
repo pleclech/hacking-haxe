@@ -207,6 +207,7 @@ let pop_expr_flag = 2
 let obj_decl_flag = 4
 let disallow_sl_flag = 8
 let null_check_flag = 16
+let check_tco_flag = 32
 
 let empty_ext_symbol() = {ss_can_access_local=true; ss_depth=0; ss_table=Hashtbl.create 0; ss_redeclared_names=[[]]; }
 let default_ext_symbol = empty_ext_symbol()
@@ -1197,6 +1198,137 @@ let is_extend_allowed p1 custom_error s = true
 
 let augment_decls pack decls =
 	let es = !ext_state in
+	let mk_name i = "__tco"^(string_of_int i) in
+	let subst n func body p =
+		let is_tco = ref false in
+		let maybe_tco = ref false in
+		let mk_return b e = if b then e else EReturn (Some e), pos e in
+		let rec patch_return patched er = match er with 
+			| ECall ((EConst (Ident s), _), el), pr ->
+				if s=n then
+					let i = ref 0 in
+					is_tco := true;
+					let q = Queue.create() in
+					let blk = (List.map (fun e -> 
+						incr(i); 
+						let v = mk_eident (mk_name !i) null_pos in
+						Queue.push v q;
+						mk_eassign v e  
+					) el) in
+					let blk = List.fold_left (fun acc (s,_,_,_,_) -> (mk_eassign (mk_eident s null_pos) (Queue.pop q)) :: acc) blk func.f_args in
+					let blk = (EContinue, null_pos)::blk in
+					true, (EBlock (List.rev blk), pr)
+				else begin
+					maybe_tco := true;
+					patched, er
+				end
+			| ETernary (c, t, f), pr ->
+				let ipt, prt = patch_return false t in
+				let ipf, prf = patch_return false f in
+				let ip = ipt||ipf in
+				let prt, prf =
+					if ip then (mk_return ipt prt), (mk_return ipf prf)
+					else prt, prf
+				in
+				ip, (ETernary(c, prt, prf), pr)
+			| EIf (c, t, sf), pr ->
+				let ipf, prf = match sf with
+					| Some e ->
+						let ip, e = patch_return false e in
+						ip, Some (mk_return ip e)
+					| _ -> false, sf
+				in
+				let ipt, prt = patch_return false t in
+				let ip = ipt||ipf in
+				let prt = mk_return ipt prt in
+				ip, (EIf (c, prt, prf), pr)
+			| _ -> patched, er
+		in
+		let rec loop e = match e with
+		| EBlock el, pe -> EBlock (List.map loop el), pe
+		| EIf (c, t, sf) , pe -> EIf (c, loop t, match sf with | Some f -> Some (loop f) | _ -> sf), pe
+		| ETernary (c, t, f) , pe -> ETernary (c, loop t, loop f), pe
+		| EWhile (c, b, f), pe -> EWhile(c, loop b, f), pe
+		| EFor (e1,e2), pe -> EFor (e1, loop e2), pe
+		| EReturn (Some er), pe ->
+			let ip, pre = patch_return false er in
+			if ip then pre
+			else e
+		| _ -> e
+		in 
+		let b = loop body in
+		let body = if !is_tco then begin
+			b end else body in
+		!is_tco, !maybe_tco, body
+	in
+	let apply_tco n func pe = match func.f_expr with
+		| Some body ->
+			let pb = pos body in
+			let tco, mbtco, b = (subst n func body pe) in
+			let body =
+				if tco then
+					let w = EWhile ((mk_eident "true" pb), b, NormalWhile), pb in
+					let i = ref 0 in
+					let ev = EVars (List.map (fun e -> incr(i); (mk_name !i, None, None, [])) func.f_args), pe in
+					EBlock [ev; w], pe
+				else begin
+					if not mbtco then !warning ("Can't do tail call optimisation for "^n) pb;
+					body
+				end
+			in
+			tco, mbtco, Some body
+		| body -> false, false, body
+	in
+	let do_tco = function
+		| EClass c, _ ->
+			let tfr cf = match cf.cff_kind with
+				| FFun ({f_expr=Some e; _} as func) ->
+					let e =
+						if Meta.has Meta.Tco cf.cff_meta then
+							let tco, mbtco, e = apply_tco cf.cff_name func cf.cff_pos in
+							let meta =
+								if mbtco then begin
+									if tco then List.map(fun (m,a,p) -> if m=Meta.Tco then (m, [mk_eint 0 p], p) else (m,a,p)) cf.cff_meta
+									else cf.cff_meta
+								end else
+									List.filter(fun (m,_,_) -> m<>Meta.Tco) cf.cff_meta
+							in
+							cf.cff_meta <- meta;
+							e
+						else
+							func.f_expr
+					in
+					let rec loop tco mbtco flags fe = match fe with
+						| EBlock el, pe ->
+							let el = List.map (loop tco mbtco flags) el in
+							tco, mbtco, (EBlock (List.map (fun (_, _, e) -> e) el), pe)
+						| EMeta ((mn, a, p), e), pe ->
+							let f = if mn=Meta.Tco then flags lor check_tco_flag else flags in
+							let tco, mbtco, e = loop tco mbtco f e in
+							let e =
+								if mbtco then
+									if tco then EMeta((mn, [mk_eint 0 p], p), e), pe
+									else fe
+								else e
+							in
+							tco, mbtco, e
+						| EFunction (Some n, func), pe when is_flag_set check_tco_flag flags ->
+							let tco, mbtco, e = apply_tco n func pe in
+							func.f_expr <- e;
+							tco, mbtco, fe
+						| _ -> tco, mbtco, fe
+					in
+					(match e with
+					| Some e ->
+						let _, _, e = loop false false 0 e in
+						func.f_expr <- Some e
+					| _ -> ())
+				| _ -> ()
+			in
+			List.iter tfr c.d_data
+		| _ -> ()
+	in
+	List.iter do_tco decls;
 	if (List.length es.es_ofs) > 0 then
 		let p = (snd es.es_cd) in
 		let pname = pack@[(get_filename p.pfile);object_name] in
@@ -1224,3 +1356,6 @@ let disallow_sl_without_parenthesis s =
 let allow_sl_without_parenthesis s =
 	restore_par_cnt();
 	pop_flag()
+
+let update_flags_from_meta m f =
+	if m=Meta.Tco then f lor check_tco_flag else f

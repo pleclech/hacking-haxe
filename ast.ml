@@ -164,6 +164,7 @@ module Meta = struct
 		| Struct
 		| StructAccess
 		| SuppressWarnings
+		| Tco
 		| This
 		| Throws
 		| To
