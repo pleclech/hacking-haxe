@@ -4,6 +4,8 @@ exception Display of expr
 
 let use_extended_syntax = ref false
 
+let allow_abstract_fun = ref true
+
 type token_stream = (token*pos) Stream.t
 
 let warning : (string -> pos -> unit) ref = ref (fun _ _ -> assert false)
@@ -733,33 +735,51 @@ let get_typename name sub params =
 		match name, sub with
 		| "Tuple", None when ln > 0 ->
 			name^(string_of_int ln)
+		| "Fun", None when ln > 0 ->
+			name^(string_of_int (ln-1))
 		| _ -> name
 	else name
+
+let get_arity re s =
+	try
+		ignore(Str.search_forward re s 0);
+		int_of_string (Str.matched_group 1 s)
+	with Not_found -> -1
+
+let create_type tname ctx code =
+	let f = Printf.sprintf "%s.ehx" tname in
+	(*Printf.printf "Creating:%s\n%s\n" tname code;*)
+	let p = { pfile=f; pmin=0; pmax=String.length code; } in
+	let ues = ctx.Common.use_extended_syntax in
+	ctx.Common.use_extended_syntax <- true;
+	try
+		let ret = (!parse_string_ref) ctx code p true, tname, p in
+		ctx.Common.use_extended_syntax <- ues;
+		ret
+	with e ->
+		ctx.Common.use_extended_syntax <- ues;
+		raise e
+
+let mk_sargs ?(sfx="") n l =
+	let mk_arg i =
+		let s_i = string_of_int i in
+		let s = n ^ s_i in
+		if sfx="" then s else s^sfx^s_i
+	in
+	let rec loop i acc =
+		if i<=0 then acc
+		else loop (i-1) ((mk_arg i) ::acc)
+	in loop l []
 
 let re_tuple = Str.regexp "^Tuple\\([0-9]+\\)$"
 
 let mk_tuple_name i = "Tuple"^(string_of_int i)
 
-let get_tuple_arity s =
-	try
-		ignore(Str.search_forward re_tuple s 0);
-		int_of_string (Str.matched_group 1 s)
-	with Not_found -> 0
+let get_tuple_arity = get_arity re_tuple
 
 let create_tuple ctx arity =
 	let cn = mk_tuple_name arity in
-	let mk_args ?(sfx="") n l =
-		let mk_arg i =
-			let s_i = string_of_int i in
-			let s = n ^ s_i in
-			if sfx="" then s else s^sfx^s_i
-		in
-		let rec loop i acc =
-			if i<=0 then acc
-			else loop (i-1) ((mk_arg i) ::acc)
-		in loop l []
-	in
-	let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_args ~sfx:sfx n arity) in
+	let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_sargs ~sfx:sfx n arity) in
 	let params = s_args "T" in
 	let args = s_args ~sfx:":T" "val _" in
 	let s = Printf.sprintf "interface I%s<%s> extends Tuple {%s;}\n" cn params (s_args ~sfx:":T" ~sep:";" "val _") in
@@ -769,24 +789,48 @@ let create_tuple ctx arity =
 	body := (Printf.sprintf "inline public def toString()='(%s)';" (s_args "$_"))::!body;
 	body := (Printf.sprintf "inline public def toArray():Array<Dynamic>=[%s];" (s_args "_"))::!body;
 	let s = s^(String.concat "\n" !body)^"\n}" in
-	let f = Printf.sprintf "%s.ehx" cn in
-	let p = { pfile=f; pmin=0; pmax=String.length s; } in
-	let ues = ctx.Common.use_extended_syntax in
-	ctx.Common.use_extended_syntax <- true;
-	try
-		let ret = (!parse_string_ref) ctx s p true, cn, p in
-		ctx.Common.use_extended_syntax <- ues;
-		ret
-	with e ->
-		ctx.Common.use_extended_syntax <- ues;
-		raise e
+	create_type cn ctx s
+
+let re_fun = Str.regexp "^Fun\\([0-9]+\\)$"
+
+let mk_fun_name i = "Fun"^(string_of_int i)
+
+let get_fun_arity = get_arity re_fun
+
+let create_fun ctx arity =
+	let cn = mk_fun_name arity in
+	let s_args ?(sfx="") ?(sep=",") n i = String.concat sep (mk_sargs ~sfx:sfx n i) in
+	let params, fun_def = match arity with
+		| 0 -> "R", "Void->R"
+		| i -> (s_args "P" i)^",R", (s_args ~sep:"->" "P" i)^"->R"
+	in
+	let s = Printf.sprintf "@:generic @:callable abstract %s<%s>(%s) from %s to %s{}\n" cn params fun_def fun_def fun_def in
+	let r =
+		allow_abstract_fun := false;
+		try
+			create_type cn ctx s
+		with e ->
+			allow_abstract_fun := true;
+			raise e
+	in
+	allow_abstract_fun := true;
+	r
+
+let get_create_factory tname =
+	match get_tuple_arity tname with
+	| -1 ->
+		begin match get_fun_arity tname with
+		| -1 -> raise Not_found
+		| i -> i, create_fun
+		end
+	| i -> i, create_tuple
 
 let create_type_on_fly ctx tname error =
-	let i = get_tuple_arity tname in
-	if i <= 0 then error()
-	else
-		let (pack, decls), cn, p = create_tuple ctx.Typecore.com i in
+	try
+		let i, factory = get_create_factory tname in
+		let (pack, decls), cn, p = factory ctx.Typecore.com i in
 		(!type_module_with_decls_ref) ctx ([], cn) p.pfile decls p
+	with Not_found -> error()
 
 let par_cnt = ref 0
 let par_cnt_stack = ref []
@@ -1013,7 +1057,7 @@ let parse_tuple p1 e error custom_error s =
 						| _ ->
 							let cnt = List.length es in
 							let t = mk_type [] (mk_tuple_name cnt) [] None in
-							tuple_or_enew t (List.rev es) (punion p1 p2) custom_error s
+							tuple_or_enew t (es) (punion p1 p2) custom_error s
 					end
 				| [< >] -> error())
 			| _ -> es)
