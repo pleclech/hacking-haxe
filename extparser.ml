@@ -1309,7 +1309,7 @@ let augment_decls pack decls =
 								if mbtco then
 									if tco then EMeta((mn, [mk_eint 0 p], p), e), pe
 									else fe
-								else e
+								else EMeta ((mn, a, p), e), pe
 							in
 							tco, mbtco, e
 						| EFunction (Some n, func), pe when is_flag_set check_tco_flag flags ->
