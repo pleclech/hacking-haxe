@@ -1096,13 +1096,14 @@ and parse_class_field s =
 										[]
 									else
 										let k = FProp("get", "never", t, None) in
+										let al = List.filter(fun a -> a<>AInline) al in
 										let cf = {cff_name = name; cff_doc = None; cff_meta = meta; cff_access = al; cff_pos = p1; cff_kind = k;} in
 										insert_cf cf;
-										let gto = mk_ecall "$getTypeOf" [mk_eident gname p1; mk_eint (-1) p1] p1 in
+										(*let gto = mk_ecall "$getTypeOf" [mk_eident gname p1; mk_eint (-1) p1] p1 in*)
 										(*[mk_ecall "$setTypeOf" [mk_eident name p1; gto] p1]*)
 										[]
 								in
-								[], [], "get_"^name, ooe
+								[], [], gname, ooe
 							| Some(pl, al) ->
 								pl, al, name, []
 						in
