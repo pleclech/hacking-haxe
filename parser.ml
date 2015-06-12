@@ -617,11 +617,13 @@ and parse_type_decl s =
 				d_data = l
 			}, punion p1 p2)
 		| [< n , p1 = parse_class_flags ~allow_object:true; name = type_name; tl = parse_constraint_params; cc=parse_class_constructor name tl p1 custom_error; hl = plist (parse_class_herit ~cc:cc); fl, p2 = parse_opt_class_body p1 name >] ->
+			let odf = is_current_flag_set obj_decl_flag in
+			let name = if odf then "O"^name else name in
 			let fl = update_cfs name cc fl p1 p2 in
 			to_pseudo_private name fl;
 			let dflags = List.map fst c @ n @ hl in
 			let dflags =
-				if is_current_flag_set obj_decl_flag then begin
+				if odf then begin
 					pop_flag();
 					HPrivate::dflags
 				end else dflags

@@ -449,7 +449,7 @@ let update_cfs class_name occ fl p1 p2 = match occ with
 	| _ -> fl
 
 let add_object_def es n p =
-	let enew = ENew ({tparams=[];tsub=None;tname=n;tpackage=[]}, []), null_pos in
+	let enew = ENew ({tparams=[];tsub=None;tname="O"^n;tpackage=[]}, []), null_pos in
 	let cf =
 		{
 			cff_name = n;
