@@ -1622,13 +1622,21 @@ and expr_next e1 = parser
 			let ef = mk_efield (mk_eident "__nc" pe) n pe in
 			let ev = EVars ["__nc", None, Some e1, []], pe in
 			let ec = (make_binop OpNotEq  (mk_eident "__nc" pe) enull) in
-			let tc =
+			let ec, tc =
 				match Stream.peek s with
 				| Some (NullCheck, _) ->
 					let ef = EMeta ((Meta.Custom ":display", [disp], pe), ef), pe in
-					expr_next ef s
+					ec, expr_next ef s
+				| Some (POpen, _) ->
+					let ef = EMeta ((Meta.Custom ":display", [disp], pe), ef), pe in
+					set_and_push_flag do_not_call_next_flag;
+					let ecall = expr_next ef s in
+					pop_flag();
+					let ec1 = (make_binop OpNotEq  (mk_eident "__nc" pe) enull) in
+					let ec2 = (make_binop OpNotEq  ef enull) in
+					(make_binop OpBoolAnd ec1 ec2), make_binop OpAssign (mk_eident "__rnc" (pos ecall)) ecall
 				| _ ->
-					make_binop OpAssign (mk_eident "__rnc" pe) ef
+					ec, make_binop OpAssign (mk_eident "__rnc" pe) ef
 			in
 			pop_flag();
 			let eif = EIf (ec, tc, None), pe in

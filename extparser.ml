@@ -208,6 +208,7 @@ let obj_decl_flag = 4
 let disallow_sl_flag = 8
 let null_check_flag = 16
 let check_tco_flag = 32
+let do_not_call_next_flag = 64
 
 let empty_ext_symbol() = {ss_can_access_local=true; ss_depth=0; ss_table=Hashtbl.create 0; ss_redeclared_names=[[]]; }
 let default_ext_symbol = empty_ext_symbol()
@@ -1116,7 +1117,10 @@ let parse_tuple_deconstruct ?(is_const=false) custom_error = parser
 
 let tuple_or_ecall e params p custom_error s =
 	let pe = pos e in
-	let next() = (!expr_next_ref) (ECall (e,params) , punion pe p) s in
+	let next() =
+		let ec = (ECall (e,params) , punion pe p) in
+		if is_current_flag_set do_not_call_next_flag then ec
+		else (!expr_next_ref) ec s in
 	if !use_extended_syntax then
 		let l = List.length params in
 		match e with
