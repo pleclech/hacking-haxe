@@ -1624,46 +1624,73 @@ and type_field ?(resume=false) ctx e i p mode =
 					let t = field_type ctx c [] f p in
 					apply_params a.a_params pl t
 				in
-				let f = match f.cf_overloads with
-					| [] -> f
-					| cfl -> loop (f :: cfl)
+				let et = type_module_type ctx (TClassDecl c) None p in
+				let field_expr f t = mk (TField (et,FStatic (c,f))) t p in
+				(match mode, f.cf_kind with
+				| (MGet | MCall), Var {v_read = AccCall } ->
+					(* getter call *)
+					let f = PMap.find ("get_" ^ f.cf_name) c.cl_statics in
+					let t = field_type f in
+					let r = match follow t with TFun(_,r) -> r | _ -> raise Not_found in
+					let ef = field_expr f t in
+					AKExpr(make_call ctx ef [e] r p)
+				| MSet, Var {v_write = AccCall } ->
+					let f = PMap.find ("set_" ^ f.cf_name) c.cl_statics in
+					let t = field_type f in
+					let ef = field_expr f t in
+					AKUsing (ef,c,f,e)
+				| (MGet | MCall), Var {v_read = AccNever} ->
+					AKNo f.cf_name
+				| (MGet | MCall), _ ->
+					let rec loop cfl = match cfl with
+						| [] -> error (Printf.sprintf "Field %s cannot be called on %s" f.cf_name (s_type (print_context()) e.etype)) p
+						| cf :: cfl ->
+							match follow (apply_params a.a_params pl (monomorphs cf.cf_params cf.cf_type)) with
+								| TFun((_,_,t1) :: _,_) when type_iseq t1 (Abstract.get_underlying_type a pl) ->
+									cf
+								| _ ->
+									loop cfl
+					in
+					let f = match f.cf_overloads with
+						| [] -> f
+						| cfl -> loop (f :: cfl)
+					in
+					let t = field_type f in
+					begin match follow t with
+						| TFun((_,_,t1) :: _,_) -> ()
+						| _ -> error ("Invalid call to static function " ^ i ^ " through abstract instance") p
+					end;
+					let ef = field_expr f t in
+					AKUsing (ef,c,f,e)
+				| MSet, _ ->
+					error "This operation is unsupported" p)
+			with Not_found -> try
+				let _,el,_ = Meta.get Meta.Forward a.a_meta in
+				if not (List.exists (fun e -> match fst e with
+					| EConst(Ident s | String s) -> s = i
+					| _ -> error "Identifier or string expected as argument to @:forward" (pos e)
+				) el) && el <> [] then raise Not_found;
+				type_field ctx {e with etype = apply_params a.a_params pl a.a_this} i p mode;
+			with Not_found -> try
+				using_field ctx mode e i p
+			with Not_found -> try
+				(match ctx.curfun, e.eexpr with
+				| FunMemberAbstract, TConst (TThis) -> type_field ctx {e with etype = apply_params a.a_params pl a.a_this} i p mode;
+				| _ -> raise Not_found)
+			with Not_found -> try
+				let c,cf = match a.a_impl,a.a_resolve with
+					| Some c,Some cf -> c,cf
+					| _ -> raise Not_found
 				in
-				let t = field_type f in
-				begin match follow t with
-					| TFun((_,_,t1) :: _,_) -> ()
-					| _ -> error ("Invalid call to static function " ^ i ^ " through abstract instance") p
-				end;
-				let ef = field_expr f t in
-				AKUsing (ef,c,f,e)
-			| MSet, _ ->
-				error "This operation is unsupported" p)
-		with Not_found -> try
-			let _,el,_ = Meta.get Meta.Forward a.a_meta in
-			if not (List.exists (fun e -> match fst e with
-				| EConst(Ident s | String s) -> s = i
-				| _ -> error "Identifier or string expected as argument to @:forward" (pos e)
-			) el) && el <> [] then raise Not_found;
-			type_field ctx {e with etype = apply_params a.a_params pl a.a_this} i p mode;
-		with Not_found -> try
-			using_field ctx mode e i p
-		with Not_found -> try
-			(match ctx.curfun, e.eexpr with
-			| FunMemberAbstract, TConst (TThis) -> type_field ctx {e with etype = apply_params a.a_params pl a.a_this} i p mode;
-			| _ -> raise Not_found)
-		with Not_found -> try
-			let c,cf = match a.a_impl,a.a_resolve with
-				| Some c,Some cf -> c,cf
-				| _ -> raise Not_found
-			in
-			let et = type_module_type ctx (TClassDecl c) None p in
-			let t = apply_params a.a_params pl (field_type ctx c [] cf p) in
-			let ef = mk (TField (et,FStatic (c,cf))) t p in
-			AKExpr ((!build_call_ref) ctx (AKUsing(ef,c,cf,e)) [EConst (String i),p] NoValue p)
-		with Not_found ->
-			if !static_abstract_access_through_instance then error ("Invalid call to static function " ^ i ^ " through abstract instance") p
-			else no_field())
-	| _ ->
-		try using_field ctx mode e i p with Not_found -> no_field()
+				let et = type_module_type ctx (TClassDecl c) None p in
+				let t = apply_params a.a_params pl (field_type ctx c [] cf p) in
+				let ef = mk (TField (et,FStatic (c,cf))) t p in
+				AKExpr ((!build_call_ref) ctx (AKUsing(ef,c,cf,e)) [EConst (String i),p] NoValue p)
+			with Not_found ->
+				if !static_abstract_access_through_instance then error ("Invalid call to static function " ^ i ^ " through abstract instance") p
+				else no_field())
+		| _ ->
+			try using_field ctx mode e i p with Not_found -> no_field())
 
 let type_bind ctx (e : texpr) params p =
 	let args,ret = match follow e.etype with TFun(args, ret) -> args, ret | _ -> error "First parameter of callback is not a function" p in
