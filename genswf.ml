@@ -259,7 +259,7 @@ let build_class com c file =
 				else args in
 				let f = {
 					f_params = [];
-					f_args = args;
+					f_args = List.map(fun (n,o,eo,x) -> (n,o,eo,x,[])) args;
 					f_type = Some (make_type t.hlmt_ret);
 					f_expr = None;
 				} in
@@ -816,6 +816,7 @@ let build_swf9 com file swc =
 						| _ :: [e] ->
 							begin match fst e with
 								| EObjectDecl fl ->
+									let fl = List.map(fun (n,e,m) -> (n,e)) fl in
 									begin try ttf_config.ttfc_font_name <- get_string (List.assoc "fontName" fl)
 									with Not_found -> () end
 								| _ ->

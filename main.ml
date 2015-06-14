@@ -208,6 +208,7 @@ let make_path f =
 	let cl = ExtString.String.nsplit f "." in
 	let cl = (match List.rev cl with
 		| ["hx";path] -> ExtString.String.nsplit path "/"
+		| ["ehx";path] -> ExtString.String.nsplit path "/" (* extended haxe syntax *)
 		| _ -> cl
 	) in
 	let error msg =

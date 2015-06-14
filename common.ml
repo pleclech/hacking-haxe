@@ -157,6 +157,12 @@ type context = {
 	(* typing *)
 	mutable basic : basic_types;
 	memory_marker : float array;
+	
+	(* extended syntax *)
+	mutable use_extended_syntax : bool;
+
+	(* disable generic*)
+	mutable no_generic : bool;
 }
 
 exception Abort of string * Ast.pos
@@ -216,6 +222,7 @@ module Define = struct
 		| NoDeprecationWarnings
 		| NoFlashOverride
 		| NoDebug
+		| NoGeneric
 		| NoInline
 		| NoOpt
 		| NoPatternMatching
@@ -241,6 +248,7 @@ module Define = struct
 		| SwfUseDoAbc
 		| Sys
 		| Unsafe
+		| UseExtendedSyntax
 		| UseNekoc
 		| UseRttiDoc
 		| Vcproj
@@ -325,6 +333,8 @@ module Define = struct
 		| SwfUseDoAbc -> ("swf_use_doabc", "Use DoAbc swf-tag instead of DoAbcDefine")
 		| Sys -> ("sys","Defined for all system platforms")
 		| Unsafe -> ("unsafe","Allow unsafe code when targeting C#")
+		| UseExtendedSyntax -> ("use_extended_syntax","Allow new syntax addition to be parsed in all file not only .ehx")
+		| NoGeneric -> ("no_generic","Disable globally generic tranformation, can be force locally with @:force_generic")
 		| UseNekoc -> ("use_nekoc","Use nekoc compiler instead of internal one")
 		| UseRttiDoc -> ("use_rtti_doc","Allows access to documentation during compilation")
 		| Vcproj -> ("vcproj","GenCPP internal")
@@ -358,6 +368,8 @@ module MetaInfo = struct
 		| Access -> ":access",("Forces private access to package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
 		| Accessor -> ":accessor",("Used internally by DCE to mark property accessors",[UsedOn TClassField;Internal])
 		| Allow -> ":allow",("Allows private access from package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
+		| AllowInitInCC -> ":allowInitInCC", ("Internal use, allow a field to be initialised from the constructor", [UsedOn TClassField])
+		| AllowWrite -> ":allowWrite",("Allows private writing from package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
 		| Analyzer -> ":analyzer",("Used to configure the static analyzer",[])
 		| Annotation -> ":annotation",("Annotation (@interface) definitions on -java-lib imports will be annotated with this metadata. Has no effect on types compiled by Haxe",[Platform Java; UsedOn TClass])
 		| ArrayAccess -> ":arrayAccess",("Allows [] access on an abstract",[UsedOnEither [TAbstract;TAbstractField]])
@@ -405,6 +417,7 @@ module MetaInfo = struct
 		| FunctionCode -> ":functionCode",("Used to inject platform-native code into a function",[Platforms [Cpp;Java;Cs]])
 		| FunctionTailCode -> ":functionTailCode",("",[Platform Cpp])
 		| Generic -> ":generic",("Marks a class or class field as generic so each type parameter combination generates its own type/field",[UsedOnEither [TClass;TClassField]])
+		| ForceGeneric -> ":force_generic",("Marks a class or class field to be generic when global flag no_generic is defined",[UsedOnEither [TClass;TClassField]])
 		| GenericBuild -> ":genericBuild",("Builds instances of a type using the specified macro",[UsedOn TClass])
 		| GenericInstance -> ":genericInstance",("Internally used to mark instances of @:generic methods",[UsedOn TClassField;Internal])
 		| Getter -> ":getter",("Generates a native getter function on the given field",[HasParam "Class field name";UsedOn TClassField;Platform Flash])
@@ -459,6 +472,7 @@ module MetaInfo = struct
 		| Public -> ":public",("Marks a class field as being public",[UsedOn TClassField])
 		| PublicFields -> ":publicFields",("Forces all class fields of inheriting classes to be public",[UsedOn TClass])
 		| QuotedField -> ":quotedField",("Used internally to mark structure fields which are quoted in syntax",[Internal])
+		| Private -> ":private",("Marks a class field as being pseudo private",[UsedOn TClassField])
 		| PrivateAccess -> ":privateAccess",("Allow private access to anything for the annotated expression",[UsedOn TExpr])
 		| Protected -> ":protected",("Marks a class field as being protected",[UsedOn TClassField])
 		| Property -> ":property",("Marks a property field to be compiled as a native C# property",[UsedOn TClassField;Platform Cs])
@@ -483,6 +497,7 @@ module MetaInfo = struct
 		| Struct -> ":struct",("Marks a class definition as a struct",[Platform Cs; UsedOn TClass])
 		| StructAccess -> ":structAccess",("Marks an extern class as using struct access('.') not pointer('->')",[Platform Cpp; UsedOn TClass])
 		| SuppressWarnings -> ":suppressWarnings",("Adds a SuppressWarnings annotation for the generated Java class",[Platform Java; UsedOn TClass])
+		| Tco -> ":tco",("Try to optimize self call function",[])
 		| Throws -> ":throws",("Adds a 'throws' declaration to the generated function",[HasParam "Type as String"; Platform Java; UsedOn TClassField])
 		| This -> ":this",("Internally used to pass a 'this' expression to macros",[Internal; UsedOn TExpr])
 		| To -> ":to",("Specifies that the field of the abstract is a cast operation to the type identified in the function",[UsedOn TAbstractField])
@@ -747,6 +762,8 @@ let create v args =
 		file_lookup_cache = Hashtbl.create 0;
 		stored_typed_exprs = PMap.empty;
 		memory_marker = memory_marker;
+		use_extended_syntax = false;
+		no_generic = false;
 	}
 
 let log com str =
@@ -1078,3 +1095,9 @@ let float_repres f =
 			if f = float_of_string s2 then s2 else
 			Printf.sprintf "%.18g" f
 		in valid_float_lexeme float_val
+
+let has_generic com meta =
+	if defined com Define.NoGeneric then
+		Meta.has Meta.ForceGeneric meta
+	else
+		Meta.has Meta.Generic meta || Meta.has Meta.ForceGeneric meta

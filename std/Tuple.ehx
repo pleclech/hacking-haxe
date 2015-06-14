@@ -1,0 +1,15 @@
+interface Tuple {
+	val arity:Int;
+	@:keep def toString():String;
+	@:keep def toArray():Array<Dynamic>;
+}
+
+/*
+ class TupleXXX is created on the fly with this model:
+
+ @:generic @:final class TupleXXX<T1,..,TXXX> inline (_1:T1,...,_XXX:TXXX) implements Tuple {
+ 	val arity:Int = XXX;
+ 	public def toString()='$_1,...,$_XXX';
+ 	public inline def toArray()=[_1,...,_XXX];
+ }
+*/

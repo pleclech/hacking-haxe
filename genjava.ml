@@ -2846,7 +2846,7 @@ let convert_java_enum ctx p pe =
 
 					FFun ({
 						f_params = types;
-						f_args = args;
+						f_args = List.map(fun (n,o,eo,x) -> (n,o,eo,x,[])) args;
 						f_type = Some t;
 						f_expr = None
 					})

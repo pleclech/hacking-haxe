@@ -488,6 +488,7 @@ let to_pattern ctx e t =
 				end
 			end
 		| (EObjectDecl fl) ->
+			let fl = List.map(fun (n,e,m) -> (n,e)) fl in
 			let is_matchable cf = match cf.cf_kind with Method _ -> false | _ -> true in
 			let is_valid_field_name fields co n p =
 				try

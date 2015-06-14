@@ -1,3 +1,4 @@
+Current build of hacking-haxe-reload : [![TravisCI Build Status](https://travis-ci.org/pleclech/hacking-haxe.svg?branch=hacking-haxe-reload)](https://travis-ci.org/pleclech/hacking-haxe)
 
 # [<img src="http://haxe.org/img/haxe-logo-horizontal.svg" alt="Haxe logo" width="140">](http://haxe.org) - [The Cross-Platform Toolkit](http://haxe.org)
 [![TravisCI Build Status](https://travis-ci.org/HaxeFoundation/haxe.svg?branch=development)](https://travis-ci.org/HaxeFoundation/haxe)

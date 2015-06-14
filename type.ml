@@ -321,12 +321,10 @@ and decision_tree = {
 
 let alloc_var =
 	let uid = ref 0 in
-	(fun n t -> incr uid; { v_name = n; v_type = t; v_id = !uid; v_capture = false; v_extra = None; v_meta = [] })
+	(fun ?(meta=[]) n t -> incr uid; { v_name = n; v_type = t; v_id = !uid; v_capture = false; v_extra = None; v_meta = meta })
 
 let alloc_unbound_var n t =
-	let v = alloc_var n t in
-	v.v_meta <- [Meta.Unbound,[],null_pos];
-	v
+	alloc_var ~meta:[Meta.Unbound,[],null_pos] n t
 
 let alloc_mid =
 	let mid = ref 0 in
@@ -500,6 +498,14 @@ let map loop t =
 		if ft == ft2 then t else ft2
 	| TDynamic t2 ->
 		if t == t2 then	t else TDynamic (loop t2)
+
+let follow_class = function
+	| { cl_kind = KGenericInstance(c, _)} -> c
+	| c -> c
+
+let get_type_list tl = function
+	| { cl_kind = KGenericInstance(_, tl) } -> tl
+	| _ -> tl
 
 (* substitute parameters with other types *)
 let apply_params cparams params t =
@@ -1391,7 +1397,8 @@ let rec type_eq param a b =
 		if e1 != e2 && not (param = EqCoreType && e1.e_path = e2.e_path) then error [cannot_unify a b];
 		List.iter2 (type_eq param) tl1 tl2
 	| TInst (c1,tl1) , TInst (c2,tl2) ->
-		if c1 != c2 && not (param = EqCoreType && c1.cl_path = c2.cl_path) && (match c1.cl_kind, c2.cl_kind with KExpr _, KExpr _ -> false | _ -> true) then error [cannot_unify a b];
+		if c1 != (follow_class c2) && not (param = EqCoreType && c1.cl_path = c2.cl_path) && (match c1.cl_kind, c2.cl_kind with KExpr _, KExpr _ -> false | _ -> true) then error [cannot_unify a b];
+		let tl2 = get_type_list tl2 c2 in
 		List.iter2 (type_eq param) tl1 tl2
 	| TFun (l1,r1) , TFun (l2,r2) when List.length l1 = List.length l2 ->
 		(try
