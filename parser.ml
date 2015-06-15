@@ -1510,6 +1510,7 @@ and expr ?(flags=0) s =
 						(match s with parser
 						| [< '(PClose,p2); _=close_par; s >] -> parenthesis_or_type e (punion p1 p2) s
 						| [< t = parse_type_hint; e2 = checktype_or_short_lambda_args e t p1 >] -> e2
+						| [< '(Const (Ident "is"),_); t = parse_type_path; '(PClose,p2); >] -> expr_next (make_is e t (punion p1 p2)) s
 						| [< s >] -> parse_tuple p1 e serror custom_error s)
 				end
 		end		
