@@ -1756,7 +1756,7 @@ and parse_switch_cases eswitch cases = parser
 		let l , def = parse_switch_cases eswitch cases s in
 		(match def with None -> () | Some _ -> error Duplicate_default p1);
 		l , Some b
-	| [< '(Kwd Case,p1); el = psep Comma expr; eg = popt parse_guard; '(DblDot,_); s >] ->
+	| [< '(Kwd Case,p1); _=disallow_sl_without_parenthesis; el = psep Comma expr; eg = popt parse_guard; '(DblDot,_); _=allow_sl_without_parenthesis; s >] ->
 		(match el with
 		| [] -> error (Custom "case without a pattern is not allowed") p1
 		| _ ->

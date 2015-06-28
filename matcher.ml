@@ -587,6 +587,36 @@ let to_pattern ctx e t =
 					PMap.iter (fun s (_,p) -> if not (PMap.mem s pctx2.pc_locals) then verror s p) pctx.pc_locals;
 					mk_pat (POr(pat1,pat2)) pat2.p_type (punion pat1.p_pos pat2.p_pos);
 			end
+		| ENew(tn, al) when tn.tparams=[] && tn.tsub=None ->
+			let in_a = Extparser.get_tuple_arity tn.tname in
+			if in_a <= 0 then raise (Unrecognized_pattern e)
+			else begin
+				let eq_cl c = (snd ((follow_class c).cl_path))=tn.tname in
+				match follow t with
+				| TInst ({ cl_path=[], cn} as c, tl) when eq_cl c ->
+					pctx.pc_is_complex <- true;
+					let rec loop_fields fl (sl, pl, i) =
+						let j = i + 1 in
+						if j <= in_a then
+							let n = "_"^(string_of_int j) in
+							try
+								let cf = PMap.find n c.cl_fields in
+								match fl with
+									| [] -> error "Not enough arguments" p
+									| x :: xs ->
+										let pat = try
+											loop pctx x cf.cf_type
+										with Not_found ->
+											(mk_any cf.cf_type p)
+										in
+										loop_fields xs ((n,cf)::sl, pat::pl, j)
+							with Not_found ->
+								error ((s_type t) ^ " has no field " ^ n ^ " that can be matched against") p;
+						else
+							mk_con_pat (CFields(i, sl)) pl t p
+					in loop_fields al ([], [], 0)
+				| _ -> error ((s_type t) ^ " should be " ^ tn.tname) p
+			end
 		| _ ->
 			raise (Unrecognized_pattern e)
 	in
