@@ -1567,11 +1567,11 @@ let rec unify a b =
 			| KTypeParameter pl -> List.exists (fun t -> match follow t with TInst (cs,tls) -> loop cs (List.map (apply_params c.cl_params tl) tls) | _ -> false) pl
 			| _ -> false)
 		in
-		let c1, tl1 =
-			if c1==c2 then c1, tl1
-			else follow_class c1, get_type_list tl1 c1
-		in
-		if not (loop c1 tl1) then error [cannot_unify a b]
+		if not (loop c1 tl1) then
+			let c1, tl1 =
+				if c1==c2 then c1, tl1 else follow_class c1, get_type_list tl1 c1
+			in
+			if not (loop c1 tl1) then error [cannot_unify a b]
 	| TFun (l1,r1) , TFun (l2,r2) when List.length l1 = List.length l2 ->
 		let i = ref 0 in
 		(try
