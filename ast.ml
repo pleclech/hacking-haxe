@@ -890,3 +890,17 @@ let rec string_list_of_expr_path_raise (e,p) =
 	| EConst (Ident i) -> [i]
 	| EField (e,f) -> f :: string_list_of_expr_path_raise e
 	| _ -> raise Exit
+
+let get_arity re s =
+	try
+		ignore(Str.search_forward re s 0);
+		int_of_string (Str.matched_group 1 s)
+	with Not_found -> -1
+
+let re_of = Str.regexp "^Of\\([0-9]+\\)$"
+let mk_of_name i = "Of"^(string_of_int i)
+let get_of_arity = get_arity re_of
+
+let mk_in_name() = "In_"
+let get_in_arity s = if s="In_" then 1 else -1
+

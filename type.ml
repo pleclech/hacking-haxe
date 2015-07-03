@@ -1357,6 +1357,24 @@ let rec type_eq param a b =
 	else match a , b with
 	| TLazy f , _ -> type_eq param (!f()) b
 	| _ , TLazy f -> type_eq param a (!f())
+	| TAbstract({a_path=[], an}, [t1]) , t2 when get_in_arity an > 0 ->
+		begin match t1 with
+		| TMono tm -> 
+			begin match !tm with
+			| None -> tm := Some t2
+			| Some t -> tm := Some t2 (*type_eq param t t2*)
+			end
+		| _ -> type_eq param t1 t2
+		end
+	| t2, TAbstract({a_path=[], an}, [t1]) when get_in_arity an > 0 ->
+		begin match t1 with
+		| TMono tm ->
+			begin match !tm with
+			| None ->tm := Some t2
+			| Some t -> tm := Some t2 (*type_eq param t2 t*)
+			end
+		| _ -> type_eq param t2 t1
+		end
 	| TMono t , _ ->
 		(match !t with
 		| None -> if param = EqCoreType || not (link t a b) then error [cannot_unify a b]
@@ -1461,6 +1479,36 @@ let rec unify a b =
 		(match !t with
 		| None -> if not (link t b a) then error [cannot_unify a b]
 		| Some t -> unify a t)
+	| TAbstract({a_path=[], an}, [t1]) , t2 when get_in_arity an > 0  ->
+		begin match t1 with 
+		| TMono tm ->()
+		| _ -> unify t1 t2
+		end
+	| t2, TAbstract({a_path=[], an}, [t1]) when get_in_arity an > 0 ->
+		begin match t1 with
+		| TMono tm -> ()
+		| _ -> unify t2 t1
+		end
+	| TAbstract({a_path=[], an}, al), _ when get_of_arity an >= 0 ->
+		(*Printf.printf ">>a:%s\n" (s_type_kind a);
+		Printf.printf "b:%s\n" (s_type_kind b);*)
+		begin match al with
+			| x::xs ->
+				let of_t = reduce_of a b x xs in
+				(*Printf.printf "of_t:%s\n" (s_type_kind of_t);*)
+				unify of_t b
+			| _ -> error [cannot_unify a b]
+		end
+	| _, TAbstract({a_path=[], an}, al) when get_of_arity an >= 0 ->
+		(*Printf.printf "a:%s\n" (s_type_kind a);
+		Printf.printf ">>b:%s\n" (s_type_kind b);*)
+		begin match al with
+			| x::xs ->
+				let of_t = reduce_of a b x xs in
+				(*Printf.printf "of_t:%s\n" (s_type_kind of_t);*)
+				unify a of_t
+			| _ -> error [cannot_unify a b]
+		end
 	| TType (t,tl) , _ ->
 		if not (List.exists (fun (a2,b2) -> fast_eq a a2 && fast_eq b b2) (!unify_stack)) then begin
 			try
@@ -1507,7 +1555,8 @@ let rec unify a b =
 			if c == c2 then begin
 				unify_type_params a b tl tl2;
 				true
-			end else (match c.cl_super with
+			end
+			else (match c.cl_super with
 				| None -> false
 				| Some (cs,tls) ->
 					loop cs (List.map (apply_params c.cl_params tl) tls)
@@ -1517,6 +1566,10 @@ let rec unify a b =
 			|| (match c.cl_kind with
 			| KTypeParameter pl -> List.exists (fun t -> match follow t with TInst (cs,tls) -> loop cs (List.map (apply_params c.cl_params tl) tls) | _ -> false) pl
 			| _ -> false)
+		in
+		let c1, tl1 =
+			if c1==c2 then c1, tl1
+			else follow_class c1, get_type_list tl1 c1
 		in
 		if not (loop c1 tl1) then error [cannot_unify a b]
 	| TFun (l1,r1) , TFun (l2,r2) when List.length l1 = List.length l2 ->
@@ -1660,6 +1713,43 @@ let rec unify a b =
 		if not (List.exists (unify_from bb tl a b) bb.a_from) then error [cannot_unify a b]
 	| _ , _ ->
 		error [cannot_unify a b]
+
+and reduce_of a b t1 tl =
+	let rec unify_params tl1 tl2 acc =
+		match tl1, tl2 with
+		| x::xs, [] -> unify_params xs tl2 (x::acc)
+		| x::xs, y::ys ->
+			begin match x with
+			| TAbstract({a_path=[], an}, [_]) when get_in_arity an > 0 -> unify_params xs ys (y::acc)
+			| _ -> unify_params xs tl2 (x::acc)
+			end
+		| [], _ -> 
+			if tl2<>[] then error [cannot_unify a b]; 
+			List.rev acc
+		in
+	let rec loop t =
+		match t with
+		| TLazy f -> loop (!f())
+		| TMono tm ->
+			begin match !tm with
+				| None -> t
+				| Some t -> loop t
+			end
+		| TAbstract(a, tl1) ->
+			let tl1' = unify_params tl1 tl [] in
+			if List.length tl1' <> List.length tl1 then t else TAbstract(a, tl1')
+		| TInst(c,tl1) ->
+			let tl1' = unify_params tl1 tl [] in
+			if List.length tl1' <> List.length tl1 then t else TInst(c, tl1')
+		| TEnum (ea, tl1) ->
+			let tl1' = unify_params tl1 tl [] in
+			if List.length tl1' <> List.length tl1 then t else TEnum(ea, tl1')
+		| TType(tt, tl1) ->
+			let tl1' = unify_params tl1 tl [] in
+			if List.length tl1' <> List.length tl1 then t else TType(tt, tl1')		
+		| _ -> t
+	in
+	loop t1
 
 and unify_abstracts a b a1 tl1 a2 tl2 =
 	let f1 = unify_to a1 tl1 b in
@@ -1815,6 +1905,9 @@ and unify_with_variance f t1 t2 =
 	| TAbstract(a,pl),t ->
 		type_eq EqBothDynamic (apply_params a.a_params pl a.a_this) t;
 		if not (List.exists (fun t2 -> allows_variance_to t (apply_params a.a_params pl t2)) a.a_to) then error [cannot_unify t1 t2]
+	(*| a, TAbstract({a_path=[], an}, [TMono b]) when get_in_arity an > 0 ->
+		b := Some a;
+		Printf.printf "In2:%s %s\n" (s_type_kind a) (s_type_kind t2)*)
 	| t,TAbstract(a,pl) ->
 		type_eq EqBothDynamic t (apply_params a.a_params pl a.a_this);
 		if not (List.exists (fun t2 -> allows_variance_to t (apply_params a.a_params pl t2)) a.a_from) then error [cannot_unify t1 t2]

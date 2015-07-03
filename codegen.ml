@@ -244,6 +244,15 @@ let make_generic ctx ps pt p =
 			let rec loop top t = match follow t with
 				| TInst(c,tl) -> (s_type_path_underscore c.cl_path) ^ (loop_tl tl)
 				| TEnum(en,tl) -> (s_type_path_underscore en.e_path) ^ (loop_tl tl)
+				(*| TAbstract({a_path=[], an}, [t]) when get_in_arity an > 0 ->
+					Printf.printf "-->%s\n" (s_type_kind t);
+					loop top t*)
+				| TAbstract({a_path=[], an}, [TMono t]) when get_in_arity an >= 0 ->
+					begin match !t with 
+						| Some t ->
+							loop top t
+						| _ -> raise (Generic_Exception ("skip", p))
+					end
 				| TAbstract(a,tl) -> (s_type_path_underscore a.a_path) ^ (loop_tl tl)
 				| _ when not top -> "_" (* allow unknown/incompatible types as type parameters to retain old behavior *)
 				| TMono _ -> raise (Generic_Exception (("Could not determine type for parameter " ^ s), p))
@@ -653,7 +662,13 @@ let build_instance ctx mtype p =
 		let ft = (fun pl ->
 			match c.cl_kind with
 			| KGeneric ->
-				build (fun () -> build_generic ctx c p pl) "build_generic"
+				build (fun () ->
+					try build_generic ctx c p pl
+					with
+					| Generic_Exception("skip", _) ->
+						c.cl_meta <- (Meta.Custom ":redo_generic",[],p) :: c.cl_meta;
+						TInst (c,pl)
+				) "build_generic"
 			| KMacroType ->
 				build (fun () -> build_macro_type ctx pl p) "macro_type"
 			| KGenericBuild cfl ->
@@ -682,6 +697,30 @@ let on_inherit ctx c p h =
 		true
 	| _ ->
 		true
+
+let redo_generic ctx e =
+	let p = Printf.printf in
+	let debug_t t = p "%s\n" (s_type_kind t) in
+	let debug e =
+		let s_type = Type.s_type (print_context()) in
+  		let s = Type.s_expr_pretty "\t" s_type e in
+  		p "%s\n" s
+  	in
+	let do_t t p = match follow t with
+		| TInst({cl_kind=KGeneric} as c, tl) when Meta.has (Meta.Custom ":redo_generic") c.cl_meta -> build_generic ctx c p tl 
+		| _ -> t
+	in
+  	let do_var v p =
+  		v.v_type <- do_t v.v_type p;
+  		v
+  	in
+   	let rec do_exp e = match e.eexpr with
+  		| TVar (v, _) ->
+  			ignore(do_var v e.epos);
+  			e
+  		| _ -> Type.map_expr do_exp e
+  	in
+	Type.map_expr do_exp e
 
 (* -------------------------------------------------------------------------- *)
 (* ABSTRACT CASTS *)

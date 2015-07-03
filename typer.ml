@@ -4010,9 +4010,19 @@ and build_call ctx acc el (with_type:with_type) p =
 				let er = EMeta((Meta.This,[],e.epos), (EConst(Ident "this"),e.epos)),e.epos in
 				er,fun () -> ctx.this_stack <- List.tl ctx.this_stack
 	in
+	let try_generic metabase usingparm genparm =
+		try
+			type_generic_function ctx genparm el ~using_param:usingparm with_type p
+		with Codegen.Generic_Exception ("skip", _) ->
+			let m = metabase.cf_meta in
+			metabase.cf_meta <- List.filter(fun (m,_,_) -> m<>Meta.Generic) m;
+			let c = build_call ctx acc el with_type p in
+			metabase.cf_meta <- (Meta.Custom ":redo_generic",[],p) :: m;
+			c
+	in
 	match acc with
  	| AKInline (ethis,f,fmode,t) when has_generic ctx.com f.cf_meta ->
-		type_generic_function ctx (ethis,fmode) el with_type p
+ 		try_generic f None (ethis, fmode) 
 	| AKInline (ethis,f,fmode,t) ->
 		(match follow t with
 			| TFun (args,r) ->
@@ -4024,7 +4034,7 @@ and build_call ctx acc el (with_type:with_type) p =
 	| AKUsing (et,cl,ef,eparam) when has_generic ctx.com ef.cf_meta ->
 		(match et.eexpr with
 		| TField(ec,fa) ->
-			type_generic_function ctx (ec,fa) el ~using_param:(Some eparam) with_type p
+			try_generic ef (Some eparam) (ec, fa)
 		| _ -> assert false)
 	| AKUsing (et,cl,ef,eparam) ->
 		begin match ef.cf_kind with
@@ -4119,7 +4129,7 @@ and build_call ctx acc el (with_type:with_type) p =
 				| TField(e1,fa) when not (match fa with FEnum _ -> true | _ -> false) ->
 					begin match fa with
 						| FInstance(_,_,cf) | FStatic(_,cf) when has_generic ctx.com cf.cf_meta ->
-							type_generic_function ctx (e1,fa) el with_type p
+							try_generic cf None (e1, fa)
 						| _ ->
 							let _,_,mk_call = unify_field_call ctx fa el args r p false in
 							mk_call e1 e.epos

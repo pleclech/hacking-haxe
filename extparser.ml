@@ -739,14 +739,10 @@ let get_typename name sub params =
 			name^(string_of_int ln)
 		| "Fun", None when ln > 0 ->
 			name^(string_of_int (ln-1))
+		| "Of", None when ln > 0 ->
+			name^(string_of_int (ln-1))
 		| _ -> name
 	else name
-
-let get_arity re s =
-	try
-		ignore(Str.search_forward re s 0);
-		int_of_string (Str.matched_group 1 s)
-	with Not_found -> -1
 
 let create_type tname ctx code =
 	let f = Printf.sprintf "%s.ehx" tname in
@@ -818,14 +814,34 @@ let create_fun ctx arity =
 	allow_abstract_fun := true;
 	r
 
+let create_of ctx arity =
+	let cn = mk_of_name arity in
+	let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_sargs ~sfx:sfx n (arity+1)) in
+	let params = s_args "T" in
+	let s = Printf.sprintf "@:final @:forward @:generic abstract %s<%s>(_) {}\n" cn params in
+	create_type cn ctx s
+
+let create_in ctx arity =
+	let cn = mk_in_name() in
+	let s = (Printf.sprintf "@:final @:forward @:multiType(T) abstract %s<T>(T) from T to T{}\n" cn) in
+	create_type cn ctx s
+
 let get_create_factory tname =
-	match get_tuple_arity tname with
-	| -1 ->
-		begin match get_fun_arity tname with
-		| -1 -> raise Not_found
-		| i -> i, create_fun
-		end
-	| i -> i, create_tuple
+		match get_tuple_arity tname with
+		| -1 ->
+			begin match get_fun_arity tname with
+			| -1 ->
+				begin match get_of_arity tname with
+				| -1 ->
+					begin match get_in_arity tname with
+					| -1 -> raise Not_found
+					| i -> i, create_in
+					end
+				| i -> i, create_of
+				end
+			| i -> i, create_fun
+			end
+		| i -> i, create_tuple
 
 let create_type_on_fly ctx tname error =
 	try

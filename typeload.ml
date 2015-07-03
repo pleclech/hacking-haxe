@@ -377,8 +377,13 @@ let rec load_instance ctx t p allow_no_params =
 	try
 		if t.tpackage <> [] || t.tsub <> None then raise Not_found;
 		let pt = List.assoc t.tname ctx.type_params in
-		if t.tparams <> [] then error ("Class type parameter " ^ t.tname ^ " can't have parameters") p;
-		pt
+		if t.tparams <> [] then
+			let t1 = CTPath {tpackage=[]; tsub=None; tname=t.tname; tparams=[]} in
+			let pms = [TPType t1]@t.tparams in
+			let t = {tpackage=[]; tsub=None; tname=(mk_of_name (List.length t.tparams)); tparams=pms} in
+			load_instance ctx t p allow_no_params
+			(*error ("Class type parameter " ^ t.tname ^ " can't have parameters") p;*)
+		else pt
 	with Not_found ->
 		let mt = load_type_def ctx p t in
 		let is_generic,is_generic_build = match mt with

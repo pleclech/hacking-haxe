@@ -899,7 +899,9 @@ and parse_type_path1 pack = parser
 			| [< >] -> serror())
 		else
 			let name,params,sub =
-				if (name="_") then "Dynamic", [TPType(CTPath {tpackage=[];tname="_";tparams=[];tsub=None;})], None
+				if (name="_") then 
+					let t = TPType(CTPath {tpackage=[];tname="_";tparams=[];tsub=None;}) in
+					mk_in_name(), [TPType(CTPath {tpackage=[];tname="Dynamic";tparams=[t];tsub=None;})], None
 				else
 					let sub = (match s with parser
 						| [< '(Dot,p); s >] ->
