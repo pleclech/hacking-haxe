@@ -739,6 +739,8 @@ let get_typename name sub params =
 			name^(string_of_int ln)
 		| "Fun", None when ln > 0 ->
 			name^(string_of_int (ln-1))
+		| "OneOf", None when ln > 0 ->
+			name^(string_of_int ln)
 		| _ -> name
 	else name
 
@@ -818,11 +820,58 @@ let create_fun ctx arity =
 	allow_abstract_fun := true;
 	r
 
+let re_oneof = Str.regexp "^OneOf\\([0-9]+\\)$"
+
+let mk_oneof_name i = "OneOf"^(string_of_int i)   
+
+let get_oneof_arity = get_arity re_oneof
+
+let mk_hxunion_name i = "HxUnion"^(string_of_int i)   
+
+let create_oneof ctx arity =
+	let cn = mk_oneof_name arity in
+	let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_sargs ~sfx:sfx n arity) in
+	let params = s_args "T" in
+	let fn = mk_hxunion_name arity in
+	let un = Printf.sprintf "%s<%s>" fn params in
+	let s = (Printf.sprintf "@:forward abstract %s<%s>(%s) from %s to %s {\n" cn params un un  un) in
+	let rec loop i acc =
+		if i <= 0 then
+			acc
+		else
+			let s = Printf.sprintf "@:from inline static function fromT%d<%s>(v:T%d):%s<%s> return %s.C%d(v);\n" i params i cn params fn i in
+			let s = Printf.sprintf "%s@:to inline function toT%d():Null<T%d> return switch(this) {case %s.C%d(v):v;case _:null;}" s i i fn i
+			in loop (i-1) (s::acc)
+	in
+	let body = loop arity [] in
+	let s = s^(String.concat "\n" body)^"\n}" in
+	create_type cn ctx s
+
+let re_hxunion = Str.regexp "^HxUnion\\([0-9]+\\)$"
+
+let get_hxunion_arity = get_arity re_hxunion
+
+let create_hxunion ctx arity =
+	let cn = mk_hxunion_name arity in
+	let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_sargs ~sfx:sfx n arity) in
+	let params = s_args "T" in
+	let un = Printf.sprintf "%s<%s>" cn params in
+	let s = Printf.sprintf "enum %s {%s);}\n" un (s_args ~sfx:"(v:T" ~sep:");" "C") in
+	create_type cn ctx s
+
 let get_create_factory tname =
 	match get_tuple_arity tname with
 	| -1 ->
 		begin match get_fun_arity tname with
-		| -1 -> raise Not_found
+		| -1 ->
+			begin match get_hxunion_arity tname with
+				| -1 ->
+					begin match get_oneof_arity tname with
+						| -1 -> raise Not_found
+						| i -> i, create_oneof
+					end
+				| i -> i, create_hxunion
+			end
 		| i -> i, create_fun
 		end
 	| i -> i, create_tuple

@@ -617,6 +617,30 @@ let to_pattern ctx e t =
 					in loop_fields al ([], [], 0)
 				| _ -> error ((s_type t) ^ " should be " ^ tn.tname) p
 			end
+		| ECast(e1, Some t1) ->
+			begin match follow t with
+				| TAbstract({ a_path = ([], an) }, tl) ->
+					let i = Extparser.get_oneof_arity an in
+					if i <= 0 then
+						raise (Unrecognized_pattern e)
+					else begin
+						let idx = ref 0 in
+						let t1 = Typeload.load_complex_type ctx (pos e1) t1 in
+						if List.exists (fun t2 -> 
+							try
+								incr idx;
+								Type.unify t1 t2;
+								true
+							with _ -> false
+						) tl then begin
+							let p = pos e1 in
+							let ec = (ECall ((EField ((EConst (Ident (Extparser.mk_hxunion_name i)),p), "C"^(string_of_int !idx)),p), [e1]), p) in
+							loop pctx ec t
+						end else 
+							raise (Unrecognized_pattern e)
+					end
+				| _ -> raise (Unrecognized_pattern e)
+			end
 		| _ ->
 			raise (Unrecognized_pattern e)
 	in
