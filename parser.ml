@@ -947,10 +947,8 @@ and parse_type_path1 pack = parser
 				tparams = params;
 				tsub = sub;
 			}
-	(*
 	| [< '(Binop OpOr,_) when do_resume() >] ->
 		raise (TypePath (List.rev pack,None,false))
-	*)
 
 and type_name = parser
 	| [< '(Const (Ident name),p) >] ->
