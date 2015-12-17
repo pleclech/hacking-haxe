@@ -3797,6 +3797,7 @@ let rec encode_binop op =
 	| OpAssignOp op -> 20, [encode_binop op]
 	| OpInterval -> 21, []
 	| OpArrow -> 22, []
+	| OpForwardPipe -> assert false
 	in
 	enc_enum IBinop tag pl
 

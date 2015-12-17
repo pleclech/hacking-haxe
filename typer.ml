@@ -2226,6 +2226,7 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 		mk (TNew ((match t with TInst (c,[]) -> c | _ -> assert false),[],[e1;e2])) t p
 	| OpArrow ->
 		error "Unexpected =>" p
+	| OpForwardPipe
 	| OpAssign
 	| OpAssignOp _ ->
 		assert false

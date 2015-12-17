@@ -4914,6 +4914,8 @@ let cppia_op_info = function
 	| IaBinOp OpAssignOp OpShl -> ("<<=", 219)
 	| IaBinOp OpAssignOp OpMod -> ("%=", 220)
 
+   | IaBinOp OpForwardPipe
+   | IaBinOp OpAssignOp OpForwardPipe
 	| IaBinOp OpAssignOp OpInterval
 	| IaBinOp OpAssignOp OpAssign
 	| IaBinOp OpAssignOp OpEq

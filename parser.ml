@@ -111,17 +111,18 @@ let is_dollar_ident e = match fst e with
 let precedence op =
 	let left = true and right = false in
 	match op with
-	| OpMod -> 0, left
-	| OpMult | OpDiv -> 1, left
-	| OpAdd | OpSub -> 2, left
-	| OpShl | OpShr | OpUShr -> 3, left
-	| OpOr | OpAnd | OpXor -> 4, left
-	| OpEq | OpNotEq | OpGt | OpLt | OpGte | OpLte -> 5, left
-	| OpInterval -> 6, left
-	| OpBoolAnd -> 7, left
-	| OpBoolOr -> 8, left
-	| OpArrow -> 9, right
-	| OpAssign | OpAssignOp _ -> 10, right
+	| OpForwardPipe -> 105, left
+	| OpMod -> 10, left
+	| OpMult | OpDiv -> 20, left
+	| OpAdd | OpSub -> 30, left
+	| OpShl | OpShr | OpUShr -> 40, left
+	| OpOr | OpAnd | OpXor -> 50, left
+	| OpEq | OpNotEq | OpGt | OpLt | OpGte | OpLte -> 60, left
+	| OpInterval -> 70, left
+	| OpBoolAnd -> 80, left
+	| OpBoolOr -> 90, left
+	| OpArrow -> 100, right
+	| OpAssign | OpAssignOp _ -> 110, right
 
 let is_not_assign = function
 	| OpAssign | OpAssignOp _ -> false
@@ -135,13 +136,19 @@ let swap op1 op2 =
 let rec make_binop op e ((v,p2) as e2) =
 	match v with
 	| EBinop (_op,_e,_e2) when swap op _op ->
-		let _e = make_binop op e _e in
-		EBinop (_op,_e,_e2) , punion (pos _e) (pos _e2)
+		let _e = make_binop op e _e in (*
+		begin match _op with
+			| OpForwardPipe -> ECall(_e2, [_e]) , punion (pos _e) (pos _e2)
+			| _ ->*) EBinop (_op,_e,_e2) , punion (pos _e) (pos _e2)
+		(*end*)
 	| ETernary (e1,e2,e3) when is_not_assign op ->
 		let e = make_binop op e e1 in
 		ETernary (e,e2,e3) , punion (pos e) (pos e3)
 	| _ ->
-		EBinop (op,e,e2) , punion (pos e) (pos e2)
+		(*begin match op with
+			| OpForwardPipe -> ECall(e2, [e]) , punion (pos e) (pos e2)
+			| _ -> *)EBinop (op,e,e2) , punion (pos e) (pos e2)
+		(*end*)
 
 let rec make_unop op ((v,p2) as e) p1 =
 	match v with
@@ -200,6 +207,7 @@ let reify in_macro =
 		| OpAssignOp o -> mk_enum "Binop" "OpAssignOp" [to_binop o p] p
 		| OpInterval -> op "OpInterval"
 		| OpArrow -> op "OpArrow"
+		| OpForwardPipe -> op "OpForwardPipe"
 	in
 	let to_string s p =
 		let len = String.length s in

@@ -834,6 +834,7 @@ let standard_precedence op =
 	| OpArrow -> 16, left
 	| OpAssignOp OpAssign -> 17, right (* mimics ?: *)
 	| OpAssign | OpAssignOp _ -> 18, right
+	| OpForwardPipe -> assert false
 
 let rec need_parent e =
 	match e.eexpr with

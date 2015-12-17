@@ -260,6 +260,7 @@ and token = parse
 	| "%=" { mk lexbuf (Binop (OpAssignOp OpMod)) }
 	| "&=" { mk lexbuf (Binop (OpAssignOp OpAnd)) }
 	| "|=" { mk lexbuf (Binop (OpAssignOp OpOr)) }
+	| "|>" { mk lexbuf (Binop OpForwardPipe) }
 	| "^=" { mk lexbuf (Binop (OpAssignOp OpXor)) }
 	| "+=" { mk lexbuf (Binop (OpAssignOp OpAdd)) }
 	| "-=" { mk lexbuf (Binop (OpAssignOp OpSub)) }

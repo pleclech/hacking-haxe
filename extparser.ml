@@ -209,6 +209,7 @@ let disallow_sl_flag = 8
 let null_check_flag = 16
 let check_tco_flag = 32
 let do_not_call_next_flag = 64
+let root_expr_flag = 128
 
 let empty_ext_symbol() = {ss_can_access_local=true; ss_depth=0; ss_table=Hashtbl.create 0; ss_redeclared_names=[[]]; }
 let default_ext_symbol = empty_ext_symbol()
@@ -374,11 +375,30 @@ let peek_for_ctx() = match (!ext_state).es_for_ctx with
 	| [] -> None
 	| x::xs -> x
 
+
+let forwardpipe e1 e2 =
+	let pe2 = pos e2 in
+	let pfn = punion (pos e1) pe2 in 
+	ECall (e2, [e1]), pfn
+
+let rec lift_forwardpipe = function
+	| EBinop(OpForwardPipe, e1, e2), _ -> forwardpipe (lift_forwardpipe e1) (lift_forwardpipe e2)
+	| e -> map_expr lift_forwardpipe e
+
 let ext_expr hx s =
-	if is_expr_available() then
-		pop_expr()
-	else
-		hx s
+	let is_re = is_current_flag_set root_expr_flag in
+	if not is_re then set_and_push_flag root_expr_flag;
+	let e = 
+		if is_expr_available() then
+			pop_expr()
+		else
+			hx s
+	in
+		if is_re then e
+		else begin
+			pop_flag();
+			lift_forwardpipe e
+		end
 
 let rec parse_cc_opt_access ?(allow_inline=true) ?(allow_access=true) s = match s with parser
 	| [< '(Kwd Private, _) when allow_access; s>] -> APrivate::(parse_cc_opt_access ~allow_access:false ~allow_inline:allow_inline s)

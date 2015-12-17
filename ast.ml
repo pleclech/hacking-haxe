@@ -262,6 +262,7 @@ type binop =
 	| OpAssignOp of binop
 	| OpInterval
 	| OpArrow
+	| OpForwardPipe
 
 type unop =
 	| Increment
@@ -608,6 +609,7 @@ let rec s_binop = function
 	| OpAssignOp op -> s_binop op ^ "="
 	| OpInterval -> "..."
 	| OpArrow -> "=>"
+	| OpForwardPipe -> "|>"
 
 let s_unop = function
 	| Increment -> "++"
