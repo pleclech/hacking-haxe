@@ -778,8 +778,7 @@ let clone com =
 		file_lookup_cache = Hashtbl.create 0;
 	}
 
-let file_time file =
-	try (Unix.stat file).Unix.st_mtime with _ -> 0.
+let file_time file = Vfs.stat_mtime file
 
 let get_signature com =
 	match com.defines_signature with
@@ -966,7 +965,7 @@ let find_file ctx f =
 			| [] -> loop true [""]
 			| p :: l ->
 				let file = p ^ f in
-				if Sys.file_exists file then
+				if Vfs.file_exists file then
 					file
 				else
 					loop (had_empty || p = "") l

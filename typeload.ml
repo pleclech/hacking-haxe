@@ -216,12 +216,19 @@ let module_pass_1 com m tdecls loadp =
 	decls, List.rev tdecls
 
 let parse_file com file p =
-	let ch = (try open_in_bin file with _ -> error ("Could not open " ^ file) p) in
+	let lexbuf, close =
+		try
+			let fn = Vfs.mem_stream file in
+			Lexing.from_function fn, (fun() -> ())
+		with Not_found ->
+			let ch = (try open_in_bin file with _ -> error ("Could not open " ^ file) p) in
+			(Lexing.from_channel ch), (fun() -> close_in ch)
+	in
 	let t = Common.timer "parsing" in
 	Lexer.init file true;
 	incr stats.s_files_parsed;
-	let data = (try Parser.parse com (Lexing.from_channel ch) with e -> close_in ch; t(); raise e) in
-	close_in ch;
+	let data = (try Parser.parse com lexbuf with e -> close(); t(); raise e) in
+	close();
 	t();
 	Common.log com ("Parsed " ^ file);
 	data

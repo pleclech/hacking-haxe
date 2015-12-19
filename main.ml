@@ -350,8 +350,44 @@ let unquote v =
 	let len = String.length v in
 	if len > 0 && v.[0] = '"' && v.[len - 1] = '"' then String.sub v 1 (len - 2) else v
 
+let re_patch = Str.regexp "--patch "
+let re_patch_args = Str.regexp "\\([^@]+\\)@.+"
+
 let parse_hxml_data data =
-	let lines = Str.split (Str.regexp "[\r\n]+") data in
+	let open String in
+	let open Str in
+
+	let rec loop str len lines =
+		try
+			let i = search_forward re_patch str 0 in
+			let s1, s2, len =
+				let len = len - i - 8 in
+				let s2 = sub str (i + 8) len in
+				if i > 0 then
+					sub data 0 (i-1), s2, len
+				else "", s2, len
+			in 
+
+			if string_match re_patch_args s2 0 then
+				let fn = matched_group  1 s2 in
+				let skip = (length fn) in
+				let len = len - skip in
+				let s2 = sub s2 skip len in
+				let s2, len, patchs = Vfs.make_patchs fn s2 len in
+				Vfs.apply_patchs patchs;
+				loop s2 len (s1::lines)
+			else begin
+				failwith "Invalid patch arguments, expecting filename@[-start_position:delete_length|+start_position:code\x01]+"
+			end
+		with
+			| Not_found -> List.rev (str::lines)
+	in 
+	let lines = loop data (length data) [] in
+	let lines = match lines with
+		| [] -> Str.split (Str.regexp "[\r\n]+") data
+		| l -> List.concat(List.map (fun e -> Str.split (Str.regexp "[\r\n]+") e) l)
+	in
+	(*let lines = Str.split (Str.regexp "[\r\n]+") data in*)
 	List.concat (List.map (fun l ->
 		let l = unquote (ExtString.String.strip l) in
 		if l = "" || l.[0] = '#' then
@@ -1312,6 +1348,9 @@ try
 		("--cwd", Arg.String (fun dir ->
 			assert false
 		),"<dir> : set current working directory");
+		("--patch", Arg.String (fun dir ->
+			assert false
+		),"<fullpathfile[@{-{delete_pos_in_byte}:{delete_len_in_byte}|{+{insert_pos_in_byte:code_string}}}{\x001}]+> : create and patch a file in memory");
 		("-version",Arg.Unit (fun() ->
 			message ctx s_version Ast.null_pos;
 			did_something := true;
@@ -1408,7 +1447,7 @@ try
 		let real = get_real_path (!Parser.resume_display).Ast.pfile in
 		classes := lookup_classes com real;
 		if !classes = [] then begin
-			if not (Sys.file_exists real) then failwith "Display file does not exist";
+			if not (Vfs.file_exists real) then failwith "Display file does not exist";
 			(match List.rev (ExtString.String.nsplit real path_sep) with
 			| file :: _ when file.[0] >= 'a' && file.[1] <= 'z' -> failwith ("Display file '" ^ file ^ "' should not start with a lowercase letter")
 			| _ -> ());
