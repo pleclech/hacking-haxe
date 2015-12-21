@@ -4,6 +4,7 @@ open Str
 type vfile = {
 	buffer : Buffer.t;
 	mutable mtime : float;
+	mutable removed: bool;
 }
 
 type patch_action =
@@ -47,16 +48,32 @@ let file_exists fn =
     with Not_found ->
     	Sys.file_exists fn
 
-let stat_mtime fn =
+let is_removed fn =
 	try
 		let vf = find_memfile fn
-		in vf.mtime
-    with Not_found ->
-    	try (Unix.stat fn).Unix.st_mtime with _ -> 0.
+		in vf.removed
+	with Not_found -> false
+
+let sys_mtime fn = try (Unix.stat fn).Unix.st_mtime with _ -> 0.
+
+let stat_mtime fn =
+	try
+		let vf = find_memfile fn in
+		let mt = vf.mtime in
+		if vf.removed then
+			let smt = sys_mtime fn in
+			if smt >= mt then begin
+				Hashtbl.remove memfiles fn;
+				smt
+			end else
+				mt  
+		else
+			mt
+    with Not_found -> sys_mtime fn
 
 let update_buffer ?(unique=true) fn buffer =
 	let _, fn = get_path unique fn in
-	let vf = {buffer=buffer; mtime=Unix.time()} in
+	let vf = {buffer=buffer; mtime=Unix.time(); removed=is_removed fn} in
 	Hashtbl.add memfiles fn vf;
 	vf
 
@@ -70,22 +87,27 @@ let create_mem_file ?(unique=true) ?(buffer=None) fn =
 	    	with Not_found ->
 	    		update_buffer ~unique:unique fn (Buffer.create 0)
 
-let mem_append ?(unique=true) fn content =
+let create_from_file ?(unique=true) fn =
 	let unique, fn = get_path unique fn in
-	let vf =
-		try
-			find_memfile ~unique:unique fn
-    	with Not_found ->
-    		let vf = {buffer=Buffer.create 1024; mtime=0.0} in
-    		ignore(Hashtbl.add memfiles fn vf);
-    		vf
-    in
-    Buffer.add_string vf.buffer content;
-    vf.mtime <- Unix.time()
+	let buffer = (try load_sys_file fn with _ -> failwith ("Could not load " ^ fn)) in
+	update_buffer ~unique:unique fn buffer
+
+let update_if_removed ?(unique=true) fn vf =
+	if vf.removed then
+		let unique, fn = get_path unique fn in
+		vf.removed <- false;
+		create_from_file ~unique:unique fn 
+	else
+		vf
 
 let mem_remove ?(unique=true) fn =
 	let _, fn = get_path unique fn in
-	Hashtbl.remove memfiles fn
+	try
+		let vf = Hashtbl.find memfiles fn in
+		vf.removed <- true;
+		vf.mtime <- Unix.time();
+		Buffer.clear vf.buffer
+	with Not_found -> ()
 
 let mem_delete ?(unique=true) fn pos len =
 	let unique, fn = get_path unique fn in
@@ -94,10 +116,9 @@ let mem_delete ?(unique=true) fn pos len =
 	else
 		let vf = 
 			try
-				find_memfile ~unique:unique fn
-			with _ ->
-				let buffer = (try load_sys_file fn with _ -> failwith ("Could not load " ^ fn)) in
-				update_buffer ~unique:unique fn buffer
+				let vf = find_memfile ~unique:unique fn in
+				update_if_removed fn vf
+			with Not_found -> create_from_file ~unique:unique fn
 		in
 		try
 			let buf_len = (Buffer.length vf.buffer) in
@@ -111,12 +132,11 @@ let mem_delete ?(unique=true) fn pos len =
 
 let mem_insert ?(unique=true) fn pos content =
 	let unique, fn = get_path unique fn in
-	let vf = 
+	let vf =
 		try
-			find_memfile ~unique:unique fn
-		with _ ->
-			let buffer = (try load_sys_file fn with _ -> failwith ("Could not load " ^ fn)) in
-			update_buffer ~unique:unique fn buffer
+			let vf = find_memfile ~unique:unique fn in
+			update_if_removed fn vf
+		with Not_found -> create_from_file ~unique:unique fn
 	in
 	let buf_len = Buffer.length vf.buffer in
 	if pos > buf_len then
@@ -153,25 +173,27 @@ let apply_patchs ?(unique=true) (fn, actions) =
 
 let mem_stream fn =
 	let vf = find_memfile fn in
-	let pos = ref 0 in
-	fun b c ->
-		let buf = vf.buffer in
-		let len = Buffer.length buf in
-		let p = !pos in
-		let avail = len - p in
-		if avail <= 0 then 0
-		else begin
-			let read = if c >= avail then avail else c in
-			let read =
-				try
-					Buffer.blit buf p b 0 read;
-					read
-				with _ ->
-					0
-			in
-			pos := p + read;
-			read
-		end
+	if vf.removed then raise Not_found
+	else
+		let pos = ref 0 in
+		fun b c ->
+			let buf = vf.buffer in
+			let len = Buffer.length buf in
+			let p = !pos in
+			let avail = len - p in
+			if avail <= 0 then 0
+			else begin
+				let read = if c >= avail then avail else c in
+				let read =
+					try
+						Buffer.blit buf p b 0 read;
+						read
+					with _ ->
+						0
+				in
+				pos := p + read;
+				read
+			end
 
 let re_patch_action = Str.regexp "@\\(+\\|-\\)\\([0-9]+\\):\\([^\001]+\\)\001"
 
@@ -181,8 +203,8 @@ let make_patchs fn sargs len =
 				if len < 3 then
 					str, len, (fn, List.rev actions)
 				else
-					let s = sub str 0 2 in
-					if s=="@x\001" then begin
+					let s = sub str 0 3 in
+					if s="@x\001" then begin
 						mem_remove fn;
 						let len = len - 3 in
 						if len > 0 then
