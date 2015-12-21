@@ -8,8 +8,8 @@ type vfile = {
 }
 
 type patch_action =
-	| PatchDelete of int * int
-	| PatchInsert of int * string
+	| PatchDelete of char * int * int
+	| PatchInsert of char * int * string
 	| PatchClose
 
 let memfiles:(string, vfile) Hashtbl.t = Hashtbl.create 0
@@ -56,13 +56,14 @@ let is_removed fn =
 
 let sys_mtime fn = try (Unix.stat fn).Unix.st_mtime with _ -> 0.
 
-let stat_mtime fn =
+let stat_mtime ?(unique=true) fn =
+	let unique, fn = get_path unique fn in
 	try
-		let vf = find_memfile fn in
+		let vf = find_memfile ~unique:unique fn in
 		let mt = vf.mtime in
 		if vf.removed then
 			let smt = sys_mtime fn in
-			if smt >= mt then begin
+			if smt > mt then begin
 				Hashtbl.remove memfiles fn;
 				smt
 			end else
@@ -81,7 +82,7 @@ let create_mem_file ?(unique=true) ?(buffer=None) fn =
 	let unique, fn = get_path unique fn in
 	match buffer with
 	| Some buffer -> update_buffer ~unique:unique fn buffer
-		| None ->
+	| None ->
 	    	try
 	    		find_memfile ~unique:unique fn
 	    	with Not_found ->
@@ -89,7 +90,7 @@ let create_mem_file ?(unique=true) ?(buffer=None) fn =
 
 let create_from_file ?(unique=true) fn =
 	let unique, fn = get_path unique fn in
-	let buffer = (try load_sys_file fn with _ -> failwith ("Could not load " ^ fn)) in
+	let buffer = (try load_sys_file fn with _ -> Buffer.create 0) in
 	update_buffer ~unique:unique fn buffer
 
 let update_if_removed ?(unique=true) fn vf =
@@ -105,9 +106,17 @@ let mem_remove ?(unique=true) fn =
 	try
 		let vf = Hashtbl.find memfiles fn in
 		vf.removed <- true;
-		vf.mtime <- Unix.time();
 		Buffer.clear vf.buffer
 	with Not_found -> ()
+
+let buffer_delete vf_buffer pos len =
+	let buf_len = (Buffer.length vf_buffer) in
+	let len = if (len = -1) then buf_len - pos else len in
+	let buf_len = buf_len - len in
+	let buffer = Buffer.create buf_len in
+	(if pos > 0 then Buffer.add_string buffer (Buffer.sub vf_buffer 0 pos));
+	Buffer.add_string buffer (Buffer.sub vf_buffer (pos + len) (buf_len-pos));
+	buffer
 
 let mem_delete ?(unique=true) fn pos len =
 	let unique, fn = get_path unique fn in
@@ -121,14 +130,26 @@ let mem_delete ?(unique=true) fn pos len =
 			with Not_found -> create_from_file ~unique:unique fn
 		in
 		try
-			let buf_len = (Buffer.length vf.buffer) in
-			let len = if (len = -1) then buf_len - pos else len in
-			let buf_len = buf_len - len in
-			let buffer = Buffer.create buf_len in
-			(if pos > 0 then Buffer.add_string buffer (Buffer.sub vf.buffer 0 pos));
-			Buffer.add_string buffer (Buffer.sub vf.buffer (pos + len) (buf_len-pos));
-			update_buffer ~unique:unique fn buffer
-		with _ -> failwith ("Could not patch delete " ^ fn)
+			update_buffer ~unique:unique fn (buffer_delete vf.buffer pos len)
+		with _ -> failwith (Printf.sprintf "Could not patch delete %d,%d of %s" pos len fn)
+
+
+let buffer_insert vf_buffer pos content =
+	let buf_len = Buffer.length vf_buffer in
+	if pos==0 then
+		let buffer = Buffer.create ((length content) + buf_len) in
+		Buffer.add_string buffer content;
+		Buffer.add_string buffer (Buffer.contents vf_buffer);
+		buffer
+	else if pos==buf_len then begin
+		Buffer.add_string vf_buffer content;
+		vf_buffer
+	end else
+		let buffer = Buffer.create ((length content) + buf_len) in
+		(if pos > 0 then Buffer.add_string buffer (Buffer.sub vf_buffer 0 pos));
+		Buffer.add_string buffer content;
+		Buffer.add_string buffer (Buffer.sub vf_buffer pos (buf_len - pos));
+		buffer
 
 let mem_insert ?(unique=true) fn pos content =
 	let unique, fn = get_path unique fn in
@@ -138,38 +159,73 @@ let mem_insert ?(unique=true) fn pos content =
 			update_if_removed fn vf
 		with Not_found -> create_from_file ~unique:unique fn
 	in
-	let buf_len = Buffer.length vf.buffer in
-	if pos > buf_len then
-		failwith (Printf.sprintf "Invalid patch insert pos:%d for %s" pos fn)
-	else
-		let vf = 
-			if pos==0 then
-				let buffer = Buffer.create ((length content) + buf_len) in
-				Buffer.add_string buffer content;
-				Buffer.add_string buffer (Buffer.contents vf.buffer);
-				update_buffer ~unique:unique fn buffer
-			else if pos==buf_len then begin
-				Buffer.add_string vf.buffer content;
-				vf
-			end else
-				let buffer = Buffer.create ((length content) + buf_len) in
-				(if pos > 0 then Buffer.add_string buffer (Buffer.sub vf.buffer 0 pos));
-				Buffer.add_string buffer content;
-				Buffer.add_string buffer (Buffer.sub vf.buffer pos (buf_len - pos));
-				update_buffer ~unique:unique fn buffer
-		in
-		vf
+	try
+		update_buffer ~unique:unique fn (buffer_insert vf.buffer pos content)
+	with _ -> failwith (Printf.sprintf "Could not patch insert %d,%s of %s" pos content fn)
 
-let apply_patch ?(unique=true) fn action =
+let apply_patch ?(unique=true) ?(text_before="") fn action =
 	let unique, fn = get_path unique fn in
+	let get_pos_len =
+		let txt_len = length text_before in
+		if txt_len=0 then (fun bc pos len -> pos, len)
+		else 
+			(fun bc pos len ->
+				if bc='b' then pos, len
+				else UTF8.nth text_before pos, if len > 0 then UTF8.nth (sub text_before pos (txt_len-pos)) len else len)
+	in
 	match action with
-	| PatchDelete (pos, len) -> ignore(mem_delete ~unique:unique fn pos len)
-	| PatchInsert (pos, code) -> ignore(mem_insert ~unique:unique fn pos code)
+	| PatchDelete (byte_or_char, pos, len) ->
+		let pos,len = get_pos_len byte_or_char pos len in
+		ignore(mem_delete ~unique:unique fn pos len)
+	| PatchInsert (byte_or_char, pos, code) ->
+		let pos, _ = get_pos_len byte_or_char pos 0 in
+		ignore(mem_insert ~unique:unique fn pos code)
 	| PatchClose -> mem_remove ~unique:unique fn
 
 let apply_patchs ?(unique=true) (fn, actions) =
 	let unique, fn = get_path unique fn in
-	List.iter(fun a -> apply_patch ~unique:unique fn a) actions
+	let vf = 
+		try
+			let vf = find_memfile ~unique:unique fn in
+			update_if_removed fn vf
+		with Not_found -> create_from_file ~unique:unique fn
+	in
+	let rbuf = ref (vf.buffer) in
+	let rcpos = ref 0 in
+	let rbpos = ref 0 in
+	let byte_offset cpos clen =
+		let bpos = !rbpos in
+		let blen = (Buffer.length !rbuf) - bpos in
+		let dcpos = cpos - !rcpos in
+		let txt = Buffer.sub !rbuf bpos blen in
+		let bpos =
+			if dcpos=0 then dcpos
+			else UTF8.nth txt dcpos
+		in
+		let blen = if clen > 0 then UTF8.nth (sub txt bpos (blen - bpos)) clen else 0 in
+		let bpos = !rbpos + bpos in
+		rbpos := bpos;
+		rcpos := cpos;
+		bpos, blen
+	in
+
+	List.iter(fun a -> match a with
+		| PatchDelete('c', cpos, clen) ->
+			let bpos, blen = byte_offset cpos clen in
+			(try
+				let buffer = buffer_delete !rbuf bpos blen in
+				ignore(update_buffer ~unique:unique fn buffer);
+				rbuf := buffer
+			with _ -> failwith (Printf.sprintf "Could not patch delete %d,%d of %s" cpos clen fn))
+		| PatchInsert('c', cpos, content) ->
+			let bpos, _ = byte_offset cpos 0 in
+			(try
+				let buffer = buffer_insert !rbuf bpos content in
+				ignore(update_buffer ~unique:unique fn buffer);
+				rbuf := buffer;
+			with _ -> failwith (Printf.sprintf "Could not patch insert %d,%s of %s" cpos content fn))
+		| _ -> apply_patch ~unique:unique fn a
+	) actions
 
 let mem_stream fn =
 	let vf = find_memfile fn in
@@ -195,7 +251,13 @@ let mem_stream fn =
 				read
 			end
 
-let re_patch_action = Str.regexp "@\\(+\\|-\\)\\([0-9]+\\):\\([^\001]+\\)\001"
+(*
+	[bc] indicate if position and length are in byte or characters
+	[+-] indicate if we want delete (-) or insert (+)
+	next group is the position in the source
+	next group is length if it's a delete operation otherwise it's the text to be inserted 
+*)
+let re_patch_action = Str.regexp "@\\([bc]\\)\\([+-]\\)\\([0-9]+\\):\\([^\001]+\\)\001"
 
 let make_patchs fn sargs len =
 		let rec loop str len actions =
@@ -213,24 +275,25 @@ let make_patchs fn sargs len =
 							"", 0, (fn, List.rev (PatchClose::actions))
 					end else
 					if string_match re_patch_action str 0 then begin
-						let op = matched_group 1 str in
-						let pos = int_of_string (matched_group 2 str) in
-						let len_or_code = matched_group 3 str in
+						let byte_or_char = matched_group 1 str in
+						let op = matched_group 2 str in
+						let pos = int_of_string (matched_group 3 str) in
+						let len_or_code = matched_group 4 str in
 						let action =
 							(match op with
 								| "-" ->
 									(try
 										let len = int_of_string len_or_code in
-										PatchDelete (pos, len)
+										PatchDelete (byte_or_char.[0], pos, len)
 									with
 										| (Failure _) as err -> raise err
 										| _ -> failwith ("invalid length for patch delete : " ^ len_or_code))
 								| "+" ->
-									PatchInsert (pos, len_or_code)
+									PatchInsert (byte_or_char.[0], pos, len_or_code)
 								| _ -> failwith ("invalid patch operation : " ^ op)
 							)
 						in
-						let gpos = (group_end 3) + 1 in
+						let gpos = (group_end 4) + 1 in
 						let len = len - gpos in
 						let str =
 							if len > 0 then
