@@ -89,7 +89,6 @@ type strict_meta =
 	| LibType
 	| LuaRequire
 	| Meta
-	| MetaList
 	| Macro
 	| MaybeUsed
 	| MergeBlock
@@ -290,7 +289,6 @@ let get_info = function
 	| KeepSub -> ":keepSub",("Extends @:keep metadata to all implementing and extending classes",[UsedOn TClass])
 	| LibType -> ":libType",("Used by -net-lib and -java-lib to mark a class that shouldn't be checked (overrides, interfaces, etc) by the type loader",[UsedInternally; UsedOn TClass; Platforms [Java;Cs]])
 	| Meta -> ":meta",("Internally used to mark a class field as being the metadata field",[])
-	| MetaList -> ":metaList",("Internally used", [UsedInternally])
 	| Macro -> ":macro",("(deprecated)",[])
 	| MaybeUsed -> ":maybeUsed",("Internally used by DCE to mark fields that might be kept",[UsedInternally])
 	| MergeBlock -> ":mergeBlock",("Merge the annotated block into the current scope",[UsedOn TExpr])
