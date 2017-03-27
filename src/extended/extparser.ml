@@ -93,9 +93,10 @@ type ext_state_t = {
 	mutable es_cc:class_constructor_t option list;
 	mutable es_flags:int list;
 	mutable es_uid:int;
-	mutable es_ofs:class_field list;
+	(*mutable es_ofs:class_field list;*)
 	mutable es_cd:string * pos;
 	mutable es_pkg:string list;
+    mutable es_cname:placed_name;
 }
 
 let mk_cff_fun fun_name meta ac cp args body p1 p2 =
@@ -175,7 +176,7 @@ module ExtState = struct
     open Tokenstream
     open Flag
 
-    let mk_empty() = {es_block_exprs=Queue.create(); es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; es_uid=0; es_ofs=[]; es_cd="",null_pos; es_pkg=[]}
+    let mk_empty() = {es_block_exprs=Queue.create(); es_exprs=Queue.create(); es_for_ctx=[]; es_cfs=Queue.create(); es_cc=[]; es_flags=[]; es_uid=0; (*es_ofs=[];*) es_cd="",null_pos; es_pkg=[]; es_cname=("",null_pos)}
 
     let states = ref []
 
@@ -258,9 +259,16 @@ module ExtState = struct
             else loop ((Queue.pop q)::acc)
         in loop acc
 
-    let mk_dotname n =
-        let aname = n::(!state).es_pkg in
-        String.concat "." (List.rev aname)
+    let mk_dotname ?(withClassName=false) n =
+        let st = !state in
+        let l =
+            let cname = (fst st.es_cname) in
+            if withClassName && (cname <> "") then
+                cname::st.es_pkg
+            else
+                st.es_pkg
+        in
+        String.concat "." (List.rev (n::l))
 
     let add_object_def es n p =
         let cf = mk_static_new n (ObjectConstructor.mk_name n) p in
@@ -287,6 +295,8 @@ module ExtState = struct
         | _ -> None
 
     let set_package pack s = (!state).es_pkg <- pack
+
+    let set_cname cname s = (!state).es_cname <- cname
 end
 
 module ExtSymbol = struct
@@ -428,7 +438,7 @@ module ClassConstructor = struct
                 else
                     (Meta.Val, [], p)::cca.cca_meta, FProp(("default", p), ("never", p), t, None)
             in
-            let cf = {cff_name = name; cff_doc = None; cff_meta = (Meta.AllowWrite , [mk_eident "new" p], p)(*::(Meta.AllowInitInCC, [], p)*)::meta; cff_access = al; cff_pos = p; cff_kind = k;} in
+            let cf = {cff_name = name; cff_doc = None; cff_meta = (Meta.AllowWrite , [mk_eident (mk_dotname ~withClassName:true "new") p], p)(*::(Meta.AllowInitInCC, [], p)*)::meta; cff_access = al; cff_pos = p; cff_kind = k;} in
             Queue.push (mk_ethis_assign (fst name) p) !init_code;
             insert_cf cf
         end;
@@ -516,23 +526,25 @@ module ClassConstructor = struct
             None, type_or_infer t, p
         end else e, t, p
 
-    let parse_code failed semicolon s =
+    let parse_code metas failed semicolon s =
         try
             match s with parser
             | [< e = (!expr_ref); s >] ->
                 semicolon s;
-                let _ = insert_exprs [e] in
+                let _ = insert_exprs [attach_meta_to_expr metas e] in
                 dummy_cf
             | [< '(Semicolon,p) >] -> dummy_cf
             | [< >] -> failed()
         with Display e ->
+            let e = attach_meta_to_expr metas e in
             let _ = insert_exprs [e] in
             match with_cc_do (mk_f ~ignore_cp:true (pos e)) with
             | None -> dummy_cf
             | Some f -> ("new", pos e), pos e, FFun f, [], None
 
 
-    let parse meta class_flags class_name cp p custom_error s =
+    let parse meta class_flags cname cp p custom_error s =
+        set_cname cname s;
         if (class_flags=[]) && (has_meta Meta.Object meta) then
             set_and_push_flag obj_decl_flag;
 
@@ -552,7 +564,7 @@ module ClassConstructor = struct
                     | [< '(POpen,o1); s >] ->
                         let data = mk_data() in (
                         match s with parser
-                            | [< arl=psep Comma parse_param; '(PClose,o2) >] -> mk_cc meta acl arl cp data
+                            | [< arl=psep Comma parse_param ; '(PClose,o2) >] -> mk_cc meta acl arl cp data
                         )
                     | [< >] -> None
                 )
@@ -606,6 +618,7 @@ module ClassConstructor = struct
         (name, pname), class_field, dflags, meta
 end
 
+(*
 let meta_to_emeta meta oexpr =
     let expr = match oexpr with
         | Some e -> e
@@ -617,6 +630,7 @@ let meta_to_emeta meta oexpr =
             | (_, _, p) as x::xs -> loop xs (EMeta (x, acc), p)
             | _ -> oexpr
     in loop meta expr
+*)
 
 let reserved_kwd_allowed = parser
 	| [< '(Kwd Val, p) >] -> "val", p
@@ -648,17 +662,18 @@ let parse_consts_expr s =
 		(!parse_var_decls_ref) ~is_const:true p s, p
 	| None -> raise Stream.Failure
 
+
 let add_cc_arg_to_cf cca =
 	if cca.cca_is_local then begin
 		cca.cca_is_local <- false;
 		let al, p, (name, opt, meta, ot, oe) = cca.cca_arg in
 		ExtSymbol.remove (fst name);
 		let t = type_or_infer ot in
-		let k =
-			if cca.cca_is_mutable then FVar(t, None)
-			else FProp(("default",p), ("never",p), t, None)
+		let meta,k =
+			if cca.cca_is_mutable then cca.cca_meta, FVar(t, None)
+			else (Meta.Val, [], p)::cca.cca_meta, FProp(("default",p), ("never",p), t, None)
 		in
-		let cf = {cff_name = name; cff_doc = None; cff_meta = (Meta.AllowWrite , [mk_eident "new" p], p)(*::(Meta.AllowInitInCC, [], p)*)::cca.cca_meta; cff_access = al; cff_pos = p; cff_kind = k;} in
+		let cf = {cff_name = name; cff_doc = None; cff_meta = (Meta.AllowWrite , [mk_eident (ExtState.mk_dotname ~withClassName:true "new") p], p)::(*(Meta.AllowInitInCC, [], p)::*)cca.cca_meta; cff_access = al; cff_pos = p; cff_kind = k;} in
 		Queue.push (mk_ethis_assign (fst name) (snd name)) !ExtState.init_code;
 		ExtState.insert_cf cf
 	end;

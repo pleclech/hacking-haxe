@@ -20,11 +20,25 @@ let expr_ref:(?flags:int -> token_stream_t -> expr) ref = ref (fun ?flags _ -> a
 let parse_constraint_params_ref:(token_stream_t -> type_param list) ref = ref (fun _ -> assert false)
 let parse_fun_param_ref:(token_stream_t -> (placed_name * bool * metadata * type_hint option * expr option) ) ref = ref (fun _ -> assert false)
 
-let attach_meta_to_expr metas expr =
-    let to_emeta meta = EMeta(meta, (EBreak, null_pos)), null_pos in
+let rec attach_meta_to_expr metas expr =
+    if metas=[] then
+        expr
+    else
     match metas with
     | [] -> expr
-    | (_, _, p)::xs -> EMeta ((Meta.MetaList, List.map to_emeta metas, p), expr), punion p (pos expr)
+    | (_, _, p) as meta::xs ->
+        let rec mk_emeta metas ((v, pv) as e) =
+            match metas with
+            | [] -> e
+            | (_,_,p) as meta::xs -> mk_emeta xs (EMeta (meta, e), punion p pv)
+        in
+        let rec loop ((v, pv) as e) =
+            match v with
+            | EBinop ((OpAssign | OpAssignOp _),_,_) -> mk_emeta xs (EMeta (meta, e), punion p pv)
+            | EBinop (bop,e1,e2) -> EBinop (bop, loop e1, e2) , punion p pv
+            | ETernary (e1,e2,e3) -> ETernary (loop e1, e2, e3), punion p pv
+            | _ -> mk_emeta xs (EMeta (meta, e), punion p pv)
+        in attach_meta_to_expr xs (loop expr)
 
 let attach_meta_to_optexpr metas oexpr =
     if metas=[] then
@@ -37,14 +51,12 @@ let attach_meta_to_optexpr metas oexpr =
         Some (attach_meta_to_expr metas expr)
 
 let unattach_meta_from_expr expr =
-    let to_meta (emeta, _) =
-        match emeta with
-        | EMeta(meta, (EBreak, _)) -> meta
-        | _ -> Meta.Last, [], null_pos
+    let rec loop expr acc =
+        match expr with
+        | EMeta (m, e), _ -> loop e (m::acc)
+        | _ -> acc, expr
     in
-    match expr with
-    | EMeta ((Meta.MetaList, emetas, _), e), _ -> List.map to_meta emetas, e
-    | _ -> [], expr
+    loop expr []
 
 let unattach_meta_from_optexpr oexpr = match oexpr with
     | None -> [], None

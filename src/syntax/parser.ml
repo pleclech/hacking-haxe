@@ -1103,7 +1103,7 @@ and parse_class_field s =
 				let e, t, p = ClassConstructor.mk_delayed_init is_cc name e t (punion p1 p2) in
 				let e, meta =
 					if sp=None then FVar (t,e), meta
-					else FProp(("default", p), ("never", p), t, e), (Meta.AllowWrite , [mk_eident "new" p1], p1)::meta
+					else FProp(("default", p), ("never", p), t, e), (Meta.Val, [], p1)::(Meta.AllowWrite , [mk_eident (ExtState.mk_dotname ~withClassName:true "new") p1], p1)::meta
 				in
 				name, punion p1 p2, e, meta, None
 			)
@@ -1184,7 +1184,7 @@ and parse_class_field s =
 			if al = [] then
 				if is_cc then
 					let semicolon s = (try ignore(semicolon s) with Error (Missing_semicolon,p) -> !display_error Missing_semicolon p) in
-					ClassConstructor.parse_code fail semicolon s
+					ClassConstructor.parse_code meta fail semicolon s
 				else
 					fail()
 			else
@@ -1273,7 +1273,7 @@ and block1 s =
 		| [< '(Const (String name),p); s >] -> block2  ~meta:meta (quote_ident name,p) (String name) p s
 		| [< b = block ~meta:meta [] >] -> EBlock b
 	else
-		let meta = List.filter(fun (mn,pm,po) -> mn<>Meta.Const) meta in
+		let meta = List.filter(fun (mn,pm,po) -> mn<>Meta.Val) meta in
 		match s with parser
 		| [< b = block ~meta:meta [] >] -> EBlock b
 
