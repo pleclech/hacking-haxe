@@ -205,13 +205,13 @@ let save_locals ctx =
 	let locals = ctx.locals in
 	(fun() -> ctx.locals <- locals)
 
-let add_local ctx n t p =
-	let v = alloc_var n t p in
+let add_local ?(meta=[]) ctx n t p =
+	let v = alloc_var ~meta:meta n t p in
 	ctx.locals <- PMap.add n v ctx.locals;
 	v
 
-let add_unbound_local ctx n t p =
-	let v = add_local ctx n t p in
+let add_unbound_local ?(meta=[]) ctx n t p =
+	let v = add_local ~meta:meta ctx n t p in
 	v.v_meta <- (Meta.Unbound,[],null_pos) :: v.v_meta;
 	v
 

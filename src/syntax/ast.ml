@@ -22,10 +22,12 @@ open Globals
 type keyword =
 	| Function
 	| Class
+	| Val
 	| Var
 	| If
 	| Else
 	| While
+	| Def
 	| Do
 	| For
 	| Break
@@ -367,10 +369,12 @@ let s_keyword = function
 	| Function -> "function"
 	| Class -> "class"
 	| Static -> "static"
+	| Val -> "val"
 	| Var -> "var"
 	| If -> "if"
 	| Else -> "else"
 	| While -> "while"
+	| Def -> "def"
 	| Do -> "do"
 	| For -> "for"
 	| Break -> "break"
