@@ -2721,7 +2721,6 @@ and type_access ctx e p mode =
 
 and type_vars ctx vl p =
 	let vl = List.map (fun ((v,pv),t,e) ->
-		let m, e = Refs.unattach_meta_from_optexpr e in
 		try
 			let t = Typeload.load_type_hint ctx p t in
 			let e = (match e with
@@ -2732,7 +2731,7 @@ and type_vars ctx vl p =
 					Some e
 			) in
 			if v.[0] = '$' then display_error ctx "Variables names starting with a dollar are not allowed" p;
-			let v = add_local ~meta:m ctx v t pv in
+			let v = add_local ctx v t pv in
 			v.v_meta <- (Meta.UserVariable,[],pv) :: v.v_meta;
 			if ctx.in_display && Display.is_display_position pv then
 				Display.DisplayEmitter.display_variable ctx.com.display v pv;
@@ -2740,7 +2739,7 @@ and type_vars ctx vl p =
 		with
 			Error (e,p) ->
 				check_error ctx e p;
-				add_unbound_local ~meta:m ctx v t_dynamic pv, None
+				add_unbound_local ctx v t_dynamic pv, None
 	) vl in
 	match vl with
 	| [v,eo] ->
