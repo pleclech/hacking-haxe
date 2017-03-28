@@ -3756,7 +3756,18 @@ and handle_signature_display ctx e_ast with_type =
 	let rec follow_with_callable (t,doc) = match follow t with
 		| TAbstract(a,tl) when Meta.has Meta.Callable a.a_meta -> follow_with_callable (Abstract.get_underlying_type a tl,doc)
 		| TFun(args,ret) -> ((args,ret),doc)
-		| _ -> error ("Not a callable type: " ^ (s_type (print_context()) t)) p
+		| TInst (tc, cp) when (Meta.has Meta.Object tc.cl_meta || Meta.has Meta.SelfCallApply tc.cl_meta) ->
+			(try
+				let cf = PMap.find "apply" tc.cl_fields in
+				let ft = Type.field_type cf in
+					(match follow ft with
+					| TFun (args, ret) -> ((args,ret),cf.cf_doc)
+					| _ -> error ((s_type (print_context()) t)^" has invalid apply function") p
+					);
+			with
+				Not_found -> error ((s_type (print_context()) t)^" does not have function apply") p
+			)
+		| _ ->  error ("Not a callable type: " ^ (s_type (print_context()) t)) p
 	in
 	let tl = List.map follow_with_callable tl in
 	let rec loop i p1 el = match el with
