@@ -81,7 +81,7 @@ let make_module ctx mpath file loadp =
 		m_types = [];
 		m_extra = module_extra (Path.unique_full_path file) (Common.get_signature ctx.com) (file_time file) (if ctx.in_macro then MMacro else MCode) (get_policy ctx mpath);
 	} in
-	m
+	Exttyper.AbstractGraph.register_module m
 
 (*
 	Build module structure : should be atomic - no type loading is possible
@@ -2539,6 +2539,8 @@ module ClassInitializer = struct
 		init_meta_overloads ctx (Some c) cf;
 		ctx.curfield <- cf;
 		let r = exc_protect ctx (fun r ->
+			let ic = Refs.get_implicit_conversion() in
+			ignore(Exttyper.enter_class c cf);
 			if not !return_partial_type then begin
 				r := (fun() -> t);
 				cctx.context_init();
@@ -2574,6 +2576,7 @@ module ClassInitializer = struct
 						cf.cf_type <- t;
 						if fctx.is_display_field then Display.DisplayEmitter.maybe_display_field ctx (cf.cf_name_pos) cf;
 			end;
+			Refs.set_implicit_conversion ic;
 			t
 		) "type_fun" in
 		if fctx.do_bind then bind_type (ctx,cctx,fctx) cf r (match fd.f_expr with Some e -> snd e | None -> f.cff_pos);
@@ -3437,7 +3440,8 @@ let type_types_into_module ctx m tdecls p =
 	let decls, tdecls = module_pass_1 ctx m tdecls p in
 	let types = List.map fst decls in
 	List.iter (check_module_types ctx m p) types;
-	m.m_types <- m.m_types @ types;
+	prepend_m_types m types;
+	(*m.m_types <- m.m_types @ types;*)
 	(* define the per-module context for the next pass *)
 	let ctx = {
 		com = ctx.com;
@@ -3897,9 +3901,10 @@ let rec build_generic ctx c p tl =
 			m_types = [];
 			m_extra = module_extra (s_type_path (pack,name)) m.m_extra.m_sign 0. MFake m.m_extra.m_check_policy;
 		} in
-		gctx.mg <- Some mg;
+		gctx.mg <- Some (Exttyper.AbstractGraph.register_module mg);
 		let cg = mk_class mg (pack,name) c.cl_pos null_pos in
-		mg.m_types <- [TClassDecl cg];
+		set_m_types mg [TClassDecl cg];
+		(*mg.m_types <- [TClassDecl cg];*)
 		Hashtbl.add ctx.g.modules mg.m_path mg;
 		add_dependency mg m;
 		add_dependency ctx.m.curmod mg;

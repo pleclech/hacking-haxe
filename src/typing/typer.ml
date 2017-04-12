@@ -941,7 +941,8 @@ let rec acc_get ctx g p =
 						loop c.cl_module.m_types
 					with Not_found ->
 						let c2 = mk_class c.cl_module mpath c.cl_pos null_pos in
-						c.cl_module.m_types <- (TClassDecl c2) :: c.cl_module.m_types;
+						append_m_type c.cl_module  (TClassDecl c2);
+						(*c.cl_module.m_types <- (TClassDecl c2) :: c.cl_module.m_types;*)
 						c2
 				in
 				let cf = try
@@ -3394,9 +3395,12 @@ and type_expr ctx (e,p) (with_type:with_type) =
 	| EBlock [] when with_type <> NoValue ->
 		type_expr ctx (EObjectDecl [],p) with_type
 	| EBlock l ->
+		let ic = Refs.get_implicit_conversion() in
+		Refs.set_implicit_conversion_from_metas ctx.meta;
 		let locals = save_locals ctx in
 		let e = type_block ctx l with_type p in
 		locals();
+		Refs.set_implicit_conversion ic;
 		e
 	| EParenthesis e ->
 		let e = type_expr ctx e with_type in
@@ -4089,8 +4093,8 @@ and maybe_type_against_enum ctx f with_type p =
 			in
 			let path,fields,mt = loop [] t in
 			let old = ctx.m.curmod.m_types in
-			let restore () = ctx.m.curmod.m_types <- old in
-			ctx.m.curmod.m_types <- ctx.m.curmod.m_types @ [mt];
+			let restore () = set_m_types ctx.m.curmod old (*ctx.m.curmod.m_types <- old*) in
+			prepend_m_types ctx.m.curmod [mt] (*ctx.m.curmod.m_types <- ctx.m.curmod.m_types @ [mt]*);
 			let e = try
 				f()
 			with

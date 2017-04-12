@@ -479,6 +479,7 @@ module Define = struct
 		| HxcppApiLevel
 		| HxcppGcGenerational
 		| HxcppDebugger
+		| ImplicitConversion
 		| IncludePrefix
 		| Interp
 		| JavaVer
@@ -575,6 +576,7 @@ module Define = struct
 		| HxcppApiLevel -> ("hxcpp_api_level","Provided to allow compatibility between hxcpp versions")
 		| HxcppGcGenerational -> ("HXCPP_GC_GENERATIONAL","Experimental Garbage Collector")
 		| HxcppDebugger -> ("HXCPP_DEBUGGER","Include additional information for HXCPP_DEBUGGER")
+		| ImplicitConversion -> ("implicit_conversion", "<mode:normal|ifAbstract|ifAny> ifAbstract allow transitive conversion when one of the left or right type is an Abstract, ifAny will try to pick a conversion that match both type")
 		| IncludePrefix -> ("include_prefix","prepend path to generated include files")
 		| Interp -> ("interp","The code is compiled to be run with --interp")
 		| JavaVer -> ("java_ver", "<version:5-7> Sets the Java version to be targeted")

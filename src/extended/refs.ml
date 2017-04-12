@@ -5,6 +5,11 @@ type token_stream_t = (token * pos) Stream.t
 
 type var_arg_t = (placed_name * type_hint option * expr option)
 
+type implicit_conversion_t =
+	| Normal
+	| IfAbstract
+	| IfAny
+
 let warning_ref : (string -> pos -> unit) ref = ref (fun _ _ -> assert false)
 let make_binop_ref:(binop -> expr -> expr -> expr) ref = ref (fun _ _ _ -> assert false)
 let parse_meta_ref:(?is_const:bool -> token_stream_t -> metadata) ref = ref (fun ?is_const _ -> assert false)
@@ -63,3 +68,55 @@ let unattach_meta_from_optexpr oexpr = match oexpr with
     | Some e ->
         let m,e = unattach_meta_from_expr e in
         m, Some e
+
+let default_implicit_conversion = Normal
+
+let implicit_conversion_ref = ref default_implicit_conversion
+
+let set_implicit_conversion m = implicit_conversion_ref := m
+
+let set_implicit_conversion_from_string s =
+	let m = 
+		match s with
+		| "normal"  -> Normal
+		| "ifAbstract" -> IfAbstract
+		| "ifAny" -> IfAny
+		| _ -> default_implicit_conversion
+	in
+    set_implicit_conversion m
+
+let get_meta m ml = List.find (fun (m2,_,_) -> m = m2) ml
+
+let set_implicit_conversion_from_metas metas =
+	try
+		begin match (get_meta Meta.ImplicitConversion metas) with
+		| _, (Ast.EConst(Ast.Ident mode), _)::[], _ ->
+			set_implicit_conversion_from_string mode
+		| _ -> set_implicit_conversion IfAny
+		end
+	with Not_found -> ()
+
+let get_implicit_conversion() = !implicit_conversion_ref
+
+let is_transitive_abstract() = match get_implicit_conversion() with
+    | Normal -> false
+    | _ -> true
+
+let is_any_implicit_conversion_allowed() = match get_implicit_conversion() with
+    | IfAny -> true
+    | _ -> false
+
+let expr_to_s e =
+    let s_type = Type.s_type (ref []) in
+	Type.s_expr_pretty false "    " false s_type e
+
+let debug_expr ?(prefix="") e =
+    let s_type = Type.s_type (ref []) in
+	let s = Type.s_expr_pretty false "    " false s_type e in
+	Printf.printf "%s%s\n%!" prefix s;
+	e
+
+let debug_type_kind t =
+	Printf.printf "%s %!" (Type.s_type_kind t);
+    t
+

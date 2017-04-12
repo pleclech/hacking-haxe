@@ -75,6 +75,7 @@ type strict_meta =
 	| Impl
 	| PythonImport
 	| ImplicitCast
+	| ImplicitConversion
 	| Include
 	| InitPackage
 	| InlineConstructorVariable
@@ -275,6 +276,7 @@ let get_info = function
 	| Impl -> ":impl",("Used internally to mark abstract implementation fields",[UsedOn TAbstractField; UsedInternally])
 	| PythonImport -> ":pythonImport",("Generates python import statement for extern classes",[Platforms [Python]; UsedOn TClass])
 	| ImplicitCast -> ":implicitCast",("Generated automatically on the AST when an implicit abstract cast happens",[UsedInternally; UsedOn TExpr])
+	| ImplicitConversion-> ":implicitConversion",("allow deeper implicit conversion from right to left expression. if set to abstract conversion will be done only if one of two type is an Abstract. if set to any will try to pick any conversion that can be done",[UsedOnEither [TClass;TClassField;]])
 	| Include -> ":include",("",[Platform Cpp])
 	| InitPackage -> ":initPackage",("Some weird thing for Genjs we want to remove someday",[UsedInternally; Platform Js])
 	| InlineConstructorVariable -> ":inlineConstructorVariable",("Internally used to mark variables that come from inlined constructors",[UsedInternally])

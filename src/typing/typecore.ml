@@ -294,7 +294,7 @@ let create_fake_module ctx file =
 			m_extra = module_extra file (Common.get_signature ctx.com) (file_time file) MFake [];
 		} in
 		Hashtbl.add fake_modules file mdep;
-		mdep
+		Exttyper.AbstractGraph.register_module mdep
 	) in
 	Hashtbl.replace ctx.g.modules mdep.m_path mdep;
 	mdep
@@ -346,8 +346,7 @@ module AbstractCast = struct
 			cast_stack := List.tl !cast_stack;
 			r
 		in
-		let find a tl f =
-			let tcf,cf = f() in
+		let when_found a tl cf eright tleft p =
 			if (Meta.has Meta.MultiType a.a_meta) then
 				mk_cast eright tleft p
 			else match a.a_impl with
@@ -357,39 +356,60 @@ module AbstractCast = struct
 				)
 				| None -> assert false
 		in
+		let find a tl f =
+			let tcf,cf = f() in
+			when_found a tl cf eright tleft p
+		in
 		if type_iseq tleft eright.etype then
 			eright
 		else begin
+			let is_ta = Refs.is_transitive_abstract() in
 			let rec loop tleft tright = match follow tleft,follow tright with
-			| TAbstract(a1,tl1),TAbstract(a2,tl2) ->
-				begin try find a2 tl2 (fun () -> Abstract.find_to a2 tl2 tleft)
-				with Not_found -> try find a1 tl1 (fun () -> Abstract.find_from a1 tl1 eright.etype tleft)
-				with Not_found -> raise Not_found
-				end
-			| TAbstract(a,tl),_ ->
+			| TAbstract(a1,tl1) as ftleft, TAbstract(a2,tl2) ->
+					begin try find a2 tl2 (fun () -> Abstract.find_to a2 tl2 tleft)
+					with Not_found -> try find a1 tl1 (fun () -> Abstract.find_from a1 tl1 eright.etype tleft)
+					with Not_found -> 
+						if is_ta then
+							Exttyper.Transitive.make_cast_with_module ctx.m.curmod cast_stack when_found ftleft eright p
+						else
+							raise Not_found
+					end
+			| TAbstract(a,tl) as ftleft,_ ->
 				begin try find a tl (fun () -> Abstract.find_from a tl eright.etype tleft)
 				with Not_found ->
 					let rec loop2 tcl = match tcl with
 						| tc :: tcl ->
 							if not (type_iseq tc tleft) then loop (apply_params a.a_params tl tc) tright
 							else loop2 tcl
-						| [] -> raise Not_found
+						| [] ->
+							if is_ta then
+								Exttyper.Transitive.make_cast_with_module ctx.m.curmod cast_stack when_found ftleft eright p
+							else
+								raise Not_found
 					in
 					loop2 a.a_from
 				end
-			| _,TAbstract(a,tl) ->
+			| _ as ftleft, TAbstract(a,tl) ->
 				begin try find a tl (fun () -> Abstract.find_to a tl tleft)
 				with Not_found ->
 					let rec loop2 tcl = match tcl with
 						| tc :: tcl ->
 							if not (type_iseq tc tright) then loop tleft (apply_params a.a_params tl tc)
 							else loop2 tcl
-						| [] -> raise Not_found
+						| [] ->
+							if is_ta then
+								Exttyper.Transitive.make_cast_with_module ctx.m.curmod cast_stack when_found ftleft eright p
+							else
+								raise Not_found
+
 					in
 					loop2 a.a_to
 				end
-			| _ ->
-				raise Not_found
+			| _ as ftleft, _ ->
+				if Refs.is_any_implicit_conversion_allowed() then
+					Exttyper.Transitive.make_cast_with_module ctx.m.curmod cast_stack when_found ftleft eright p
+				else
+					raise Not_found
 			in
 			loop tleft eright.etype
 		end

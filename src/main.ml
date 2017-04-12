@@ -572,6 +572,13 @@ try
 		), ": add debug information to the compiled code");
 	] in
 	let adv_args_spec = [
+		("-implicitConversion", Arg.String (fun mode ->
+			(match mode with
+			| "normal" | "ifabstract" | "ifany" -> ()
+			| _ -> raise (Arg.Bad "Invalid implicit conversion mode, expected normal | ifabstract | ifany"));
+			Refs.set_implicit_conversion_from_string mode;
+			Common.define_value com Define.ImplicitConversion mode
+		),"[std|full|no] : set the dead code elimination mode (default std)");
 		("-dce", Arg.String (fun mode ->
 			(match mode with
 			| "std" | "full" | "no" -> ()
