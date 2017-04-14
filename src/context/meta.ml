@@ -6,6 +6,7 @@ type strict_meta =
 	| Access
 	| Accessor
 	| Allow
+	| AllowUnderlyingType
 	| AllowWrite
 	| Analyzer
 	| Annotation
@@ -166,6 +167,7 @@ type strict_meta =
 	| Volatile
 	| Unbound
 	| UnifyMinDynamic
+	| UnorderedCheckTypeParameter
 	| Unreflective
 	| Unsafe
 	| Usage
@@ -205,8 +207,9 @@ let get_info = function
 	| Abi -> ":abi",("Function ABI/calling convention",[Platforms [Cpp]])
 	| Abstract -> ":abstract",("Sets the underlying class implementation as 'abstract'",[Platforms [Java;Cs]])
 	| Access -> ":access",("Forces private access to package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
-	| Accessor -> ":accessor",("Used internally by DCE to mark property accessors",[UsedOn TClassField;UsedInternally])
+	| Accessor -> ":accessor",("Used internally by DCE to mark property accessors",[UsedOn TClassField;UsedInternally])	
 	| Allow -> ":allow",("Allows private access from package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
+	| AllowUnderlyingType -> ":allowUnderlyingType",("Allow a coreType abstract to have an underlying type", [UsedOn TAbstract])
 	| AllowWrite -> ":allowWrite",("Allows private writing from package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
 	| Analyzer -> ":analyzer",("Used to configure the static analyzer",[])
 	| Annotation -> ":annotation",("Annotation (@interface) definitions on -java-lib imports will be annotated with this metadata. Has no effect on types compiled by Haxe",[Platform Java; UsedOn TClass])
@@ -366,6 +369,7 @@ let get_info = function
 	| ValueUsed -> ":valueUsed",("Internally used by DCE to mark an abstract value as used",[UsedInternally])
 	| Volatile -> ":volatile",("",[Platforms [Java;Cs]])
 	| Unbound -> ":unbound", ("Compiler internal to denote unbounded global variable",[UsedInternally])
+	| UnorderedCheckTypeParameter -> ":unorderedCheckTypeParameter", ("Internal to allow checking of type parameter of two abstract in an unordered maner",[UsedInternally])
 	| UnifyMinDynamic -> ":unifyMinDynamic",("Allows a collection of types to unify to Dynamic",[UsedOn TClassField])
 	| Unreflective -> ":unreflective",("",[Platform Cpp])
 	| Unsafe -> ":unsafe",("Declares a class, or a method with the C#'s 'unsafe' flag",[Platform Cs; UsedOnEither [TClass;TClassField]])

@@ -72,8 +72,8 @@ RELDIR=../../..
 
 MODULES=json version globals path context/meta syntax/ast display/displayTypes typing/type typing/error \
 	syntax/lexer context/common generators/genxml \
-	extended/tokenstream extended/refs extended/extparser extended/exttyper \
-	syntax/parser typing/abstract typing/typecore display/display optimization/optimizerTexpr \
+	extended/tokenstream extended/refs extended/extparser \
+	syntax/parser typing/abstract extended/exttyper typing/typecore display/display optimization/optimizerTexpr \
 	optimization/optimizer typing/overloads typing/typeload sourcemaps generators/codegen generators/gencommon generators/genas3 \
 	generators/gencpp generators/genjs generators/genneko generators/genphp generators/genphp7 generators/genswf9 \
 	generators/genswf generators/genjava generators/gencs generators/genpy macro/macroApi macro/interp generators/hlcode generators/hlopt generators/hlinterp generators/hl2c \
@@ -262,7 +262,7 @@ src/syntax/parser.$(MODULE_EXT): src/globals.$(MODULE_EXT) src/context/meta.$(MO
 	$(CC_PARSER_CMD)
 
 # typing
-src/extended/exttyper.$(MODULE_EXT): src/extended/exttyper.ml src/context/meta.$(MODULE_EXT) src/typing/type.$(MODULE_EXT) src/typing/error.$(MODULE_EXT) src/globals.$(MODULE_EXT) src/extended/refs.$(MODULE_EXT)
+src/extended/exttyper.$(MODULE_EXT): src/context/meta.$(MODULE_EXT) src/typing/type.$(MODULE_EXT) src/typing/error.$(MODULE_EXT) src/globals.$(MODULE_EXT) src/extended/refs.$(MODULE_EXT) src/syntax/parser.$(MODULE_EXT)
 
 src/typing/abstract.$(MODULE_EXT): src/context/meta.$(MODULE_EXT) src/typing/type.$(MODULE_EXT) src/typing/error.$(MODULE_EXT) src/globals.$(MODULE_EXT)
 
@@ -282,13 +282,13 @@ src/typing/typer.$(MODULE_EXT): src/typing/abstract.$(MODULE_EXT) src/context/me
 
 # main
 
-src/main.$(MODULE_EXT): src/context/meta.$(MODULE_EXT) src/globals.$(MODULE_EXT) src/typing/error.$(MODULE_EXT) src/globals.$(MODULE_EXT) src/path.$(MODULE_EXT) src/optimization/filters.$(MODULE_EXT) src/typing/matcher.$(MODULE_EXT) src/typing/typer.$(MODULE_EXT) src/typing/typeload.$(MODULE_EXT) src/typing/typecore.$(MODULE_EXT) src/typing/type.$(MODULE_EXT) src/extended/tokenstream.$(MODULE_EXT) src/extended/extparser.$(MODULE_EXT) src/syntax/parser.$(MODULE_EXT) src/optimization/optimizer.$(MODULE_EXT) src/syntax/lexer.$(MODULE_EXT) src/macro/interp.$(MODULE_EXT) src/generators/genxml.$(MODULE_EXT) src/generators/genswf.$(MODULE_EXT) src/generators/genphp.$(MODULE_EXT) src/generators/genphp7.$(MODULE_EXT) src/generators/genneko.$(MODULE_EXT) src/generators/genjs.$(MODULE_EXT) src/generators/genlua.$(MODULE_EXT) src/generators/gencpp.$(MODULE_EXT) src/generators/genas3.$(MODULE_EXT) src/context/common.$(MODULE_EXT) src/generators/codegen.$(MODULE_EXT) src/generators/genjava.$(MODULE_EXT) src/generators/gencs.$(MODULE_EXT) src/generators/genpy.$(MODULE_EXT) src/generators/genhl.$(MODULE_EXT) src/display/display.$(MODULE_EXT) src/server.$(MODULE_EXT) src/display/displayOutput.$(MODULE_EXT) libs/ilib/il.$(LIB_EXT) src/extended/refs.$(MODULE_EXT)
+src/main.$(MODULE_EXT): src/context/meta.$(MODULE_EXT) src/globals.$(MODULE_EXT) src/typing/error.$(MODULE_EXT) src/globals.$(MODULE_EXT) src/path.$(MODULE_EXT) src/optimization/filters.$(MODULE_EXT) src/typing/matcher.$(MODULE_EXT) src/typing/typer.$(MODULE_EXT) src/typing/typeload.$(MODULE_EXT) src/typing/typecore.$(MODULE_EXT) src/typing/type.$(MODULE_EXT) src/extended/tokenstream.$(MODULE_EXT) src/extended/extparser.$(MODULE_EXT) src/syntax/parser.$(MODULE_EXT) src/optimization/optimizer.$(MODULE_EXT) src/syntax/lexer.$(MODULE_EXT) src/macro/interp.$(MODULE_EXT) src/generators/genxml.$(MODULE_EXT) src/generators/genswf.$(MODULE_EXT) src/generators/genphp.$(MODULE_EXT) src/generators/genphp7.$(MODULE_EXT) src/generators/genneko.$(MODULE_EXT) src/generators/genjs.$(MODULE_EXT) src/generators/genlua.$(MODULE_EXT) src/generators/gencpp.$(MODULE_EXT) src/generators/genas3.$(MODULE_EXT) src/context/common.$(MODULE_EXT) src/generators/codegen.$(MODULE_EXT) src/generators/genjava.$(MODULE_EXT) src/generators/gencs.$(MODULE_EXT) src/generators/genpy.$(MODULE_EXT) src/generators/genhl.$(MODULE_EXT) src/display/display.$(MODULE_EXT) src/server.$(MODULE_EXT) src/display/displayOutput.$(MODULE_EXT) libs/ilib/il.$(LIB_EXT) src/extended/refs.$(MODULE_EXT) src/extended/exttyper.$(MODULE_EXT)
 
 src/globals.$(MODULE_EXT): src/version.$(MODULE_EXT)
 
 src/path.$(MODULE_EXT): src/globals.$(MODULE_EXT)
 
-src/server.$(MODULE_EXT): src/context/meta.$(MODULE_EXT) src/globals.$(MODULE_EXT) src/path.$(MODULE_EXT) src/typing/typer.$(MODULE_EXT) src/typing/typeload.$(MODULE_EXT) src/typing/typecore.$(MODULE_EXT) src/typing/type.$(MODULE_EXT) src/syntax/parser.$(MODULE_EXT) src/typing/typecore.$(MODULE_EXT) src/typing/type.$(MODULE_EXT) src/context/common.$(MODULE_EXT) src/context/common.$(MODULE_EXT) src/syntax/parser.$(MODULE_EXT) src/syntax/ast.$(MODULE_EXT) src/display/displayOutput.$(MODULE_EXT)
+src/server.$(MODULE_EXT): src/context/meta.$(MODULE_EXT) src/globals.$(MODULE_EXT) src/path.$(MODULE_EXT) src/typing/typer.$(MODULE_EXT) src/typing/typeload.$(MODULE_EXT) src/typing/typecore.$(MODULE_EXT) src/typing/type.$(MODULE_EXT) src/syntax/parser.$(MODULE_EXT) src/typing/typecore.$(MODULE_EXT) src/typing/type.$(MODULE_EXT) src/context/common.$(MODULE_EXT) src/context/common.$(MODULE_EXT) src/syntax/ast.$(MODULE_EXT) src/display/displayOutput.$(MODULE_EXT)
 
 src/version.$(MODULE_EXT):
 	$(MAKE) -f Makefile.version_extra -s --no-print-directory ADD_REVISION=$(ADD_REVISION) BRANCH=$(BRANCH) COMMIT_SHA=$(COMMIT_SHA) COMMIT_DATE=$(COMMIT_DATE) > src/version.ml

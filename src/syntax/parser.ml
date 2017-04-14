@@ -920,9 +920,31 @@ and parse_type_opt = parser
 	| [< t = parse_type_hint >] -> Some t
 	| [< >] -> None
 
-and parse_complex_type s =
+and parse_complex_type ?(acc=[]) s =
+	let s = match s with parser
+		| [< '(Binop OpOr, _); s >] -> s
+		| [< s >] -> s
+	in
 	let t = parse_complex_type_inner s in
-	parse_complex_type_next t s
+	let t = parse_complex_type_next t s in
+	let ct t acc =
+		match List.length acc with
+		| 0 -> t
+		| i ->
+			let p = pos t in
+			let acc = List.rev ((TPType t)::acc) in
+			let t = {
+				tpackage = [];
+				tname = Printf.sprintf "OneOf%d" (i+1);
+				tparams = acc;
+				tsub = None;
+			}
+			in CTPath t, p
+	in
+	match s with parser
+		| [< '(Binop OpOr, _); s >] ->
+			parse_complex_type ~acc:((TPType t)::acc) s
+		| [< >] -> 	ct t acc
 
 and parse_structural_extension = parser
 	| [< '(Binop OpGt,_); t = parse_type_path; '(Comma,_); s >] ->

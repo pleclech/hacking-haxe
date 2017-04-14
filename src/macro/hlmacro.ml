@@ -101,6 +101,12 @@ let set_error ctx e =
 
 let add_types ctx types ready =
 	let types = List.filter (fun t -> match t with
+		| TAbstractDecl a when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+			let path = Type.t_path t in
+			if Hashtbl.mem ctx.types path then false else begin
+				Hashtbl.add ctx.types path (Type.t_infos t).mt_module.m_id;
+				true;
+			end
 		| TAbstractDecl a when not (Meta.has Meta.CoreType a.a_meta) ->
 			(* A @:native on an abstract causes the implementation class and the abstract
 			   to have the same path. Let's skip all abstracts so this doesn't matter. *)

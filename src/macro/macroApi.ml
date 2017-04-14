@@ -1704,6 +1704,8 @@ let macro_api ccom get_api =
 					(match !r with
 					| None -> t
 					| Some t -> t)
+				| TAbstract (a,tl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+					Abstract.get_underlying_type a tl
 				| TAbstract (a,tl) when not (Meta.has Meta.CoreType a.a_meta) ->
 					Abstract.get_underlying_type a tl
 				| TAbstract _ | TEnum _ | TInst _ | TFun _ | TAnon _ | TDynamic _ ->

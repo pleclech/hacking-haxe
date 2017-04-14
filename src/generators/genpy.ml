@@ -2294,7 +2294,7 @@ module Generator = struct
 		| TAbstractDecl {a_path = [],"Class"} when not (has_feature ctx "Class.*") -> ()
 		| TAbstractDecl {a_path = [],"Dynamic"} when not (has_feature ctx "Dynamic.*") -> ()
 		| TAbstractDecl {a_path = [],"Bool"} when not (has_feature ctx "Bool.*") -> ()
-
+		| TAbstractDecl a when Meta.has Meta.AllowUnderlyingType a.a_meta -> ()
 		| TAbstractDecl a when Meta.has Meta.CoreType a.a_meta -> gen_abstract ctx a
 		| _ -> ()
 

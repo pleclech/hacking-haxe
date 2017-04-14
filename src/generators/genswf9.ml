@@ -103,6 +103,8 @@ type context = {
 }
 
 let rec follow t = match Type.follow t with
+	| TAbstract(a,tl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+		follow (Abstract.get_underlying_type a tl)
 	| TAbstract(a,tl) when not (Meta.has Meta.CoreType a.a_meta) ->
 		follow (Abstract.get_underlying_type a tl)
 	| t ->
@@ -205,6 +207,8 @@ let rec follow_basic t =
 		t
 	| TType (t,tl) ->
 		follow_basic (apply_params t.t_params tl t.t_type)
+	| TAbstract (a,pl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+		follow_basic (apply_params a.a_params pl a.a_this)
 	| TAbstract (a,pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 		follow_basic (apply_params a.a_params pl a.a_this)
 	| _ -> t

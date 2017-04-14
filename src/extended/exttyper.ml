@@ -1,3 +1,4 @@
+open Globals
 open Meta
 open Type
 open Error
@@ -316,3 +317,61 @@ let enter_class c cf =
 	Refs.set_implicit_conversion_from_metas c.cl_meta;
 	Refs.set_implicit_conversion_from_metas cf.cf_meta
 
+module OnTheFly = struct
+	let mk_sargs ?(sfx="") n l =
+		let mk_arg i =
+			let s_i = string_of_int i in
+			let s = n ^ s_i in
+			if sfx="" then s else s^sfx^s_i
+		in
+		let rec loop i acc =
+			if i<=0 then acc
+			else loop (i-1) ((mk_arg i) ::acc)
+		in loop l []
+
+	let create_type tname ctx code =
+		let f = Printf.sprintf "%s.hx" tname in
+		(*Printf.printf "Creating:%s\n%s\n%!" tname code;*)
+		let p = { pfile=f; pmin=0; pmax=(String.length code); } in
+		Parser.parse_string ctx code p Error.error true, tname, p
+
+	let mk_OneOf ctx tname name arity =
+		let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_sargs ~sfx:sfx n arity) in
+		let tas = s_args "T" in
+		let fps = s_args ~sep:" from " "T" in
+		let s = Printf.sprintf "@:allowUnderlyingType @:unorderedCheckTypeParameter @:coreType abstract %s<%s>(Any) from %s {public inline function new(v:Any) this=v;}" tname tas fps in
+    	create_type tname ctx s
+	
+	let type_factories = [("OneOf", mk_OneOf)]
+
+	let re_arity = Str.regexp "^\\([a-zA-Z_]+\\)\\([0-9]+\\)$"
+
+	let get_arity s =
+		ignore(Str.search_forward re_arity s 0);
+		let i = Str.matched_group 2 s in
+		let n = Str.matched_group 1 s in
+		(n, int_of_string i)
+
+	let find_type_factory s =
+		let rec find xs =
+			match xs with
+			| (n,tf)::xs -> 
+				if s=n then tf
+				else find xs
+			| [] -> raise Not_found
+		in
+		find type_factories
+
+	let get_create_factory tname =
+		let n,i = get_arity tname in
+		if i < 1 then raise Not_found;
+		let tf = find_type_factory n in
+		n,i,tf
+
+	let create_type ctx com tname error type_module =
+		try
+			let name, arity, factory = get_create_factory tname in
+			let (pack, decls), cn, p = factory com tname name arity in
+			type_module ctx ([], cn) p.pfile decls p
+		with Not_found -> error()
+end

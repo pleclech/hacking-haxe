@@ -618,20 +618,6 @@ module ClassConstructor = struct
         (name, pname), class_field, dflags, meta
 end
 
-(*
-let meta_to_emeta meta oexpr =
-    let expr = match oexpr with
-        | Some e -> e
-        | None -> mk_enull null_pos
-    in
-    let rec loop meta acc =
-        match meta with
-            | (_, _, p) as x::[]-> Some (EMeta (x, acc), p)
-            | (_, _, p) as x::xs -> loop xs (EMeta (x, acc), p)
-            | _ -> oexpr
-    in loop meta expr
-*)
-
 let reserved_kwd_allowed = parser
 	| [< '(Kwd Val, p) >] -> "val", p
 	| [< '(Kwd Def,p) >] -> "def", p

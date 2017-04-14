@@ -48,6 +48,8 @@ let rec is_cs_basic_type t =
 			false
 		| TAbstract _ when like_float t ->
 			true
+		| TAbstract(a,pl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+			is_cs_basic_type (Abstract.get_underlying_type a pl)
 		| TAbstract(a,pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 			is_cs_basic_type (Abstract.get_underlying_type a pl)
 		| TEnum(e, _) when not (Meta.has Meta.Class e.e_meta) -> true
@@ -831,6 +833,8 @@ let configure gen =
 					Some (TType(tdef,[follow (gen.gfollow#run_f t2)]))
 			| TAbstract({ a_path = ["cs"],"PointerAccess" },[t]) ->
 					Some (TAbstract(ptr,[t]))
+			| TAbstract (a, pl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+					Some (gen.gfollow#run_f ( Abstract.get_underlying_type a pl) )
 			| TAbstract (a, pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 					Some (gen.gfollow#run_f ( Abstract.get_underlying_type a pl) )
 			| TAbstract( { a_path = ([], "EnumValue") }, _	)
@@ -868,6 +872,8 @@ let configure gen =
 	let rec real_type t =
 		let t = gen.gfollow#run_f t in
 		let ret = match t with
+			| TAbstract (a, pl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+				real_type (Abstract.get_underlying_type a pl)
 			| TAbstract (a, pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 				real_type (Abstract.get_underlying_type a pl)
 			| TAbstract ({ a_path = (["cs";"_Flags"], "EnumUnderlying") }, [t]) ->
@@ -1031,6 +1037,8 @@ let configure gen =
 					| Statics _ | EnumStatics _ -> "System.Type"
 					| _ -> "object")
 			| TDynamic _ -> "object"
+			| TAbstract(a,pl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+				t_s (Abstract.get_underlying_type a pl)
 			| TAbstract(a,pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 				t_s (Abstract.get_underlying_type a pl)
 			(* No Lazy type nor Function type made. That's because function types will be at this point be converted into other types *)

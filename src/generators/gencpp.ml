@@ -1780,6 +1780,10 @@ let rec cpp_type_of ctx haxe_type =
    | TInst (klass,params) ->
       cpp_instance_type ctx klass params
 
+   | TAbstract (abs,pl) when (Meta.has Meta.AllowUnderlyingType abs.a_meta) ->
+       cpp_type_from_path ctx abs.a_path pl (fun () ->
+            cpp_type_of ctx (Abstract.get_underlying_type abs pl) )
+
    | TAbstract (abs,pl) when not (Meta.has Meta.CoreType abs.a_meta) ->
        cpp_type_from_path ctx abs.a_path pl (fun () ->
             cpp_type_of ctx (Abstract.get_underlying_type abs pl) )

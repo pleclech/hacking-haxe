@@ -913,6 +913,8 @@ let configure gen =
 					Some t
 			| TType (({ t_path = [],"Null" } as tdef),[t2]) ->
 					Some (TType(tdef,[gen.gfollow#run_f t2]))
+			| TAbstract (a, pl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+					Some (gen.gfollow#run_f ( Abstract.get_underlying_type a pl) )
 			| TAbstract (a, pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 					Some (gen.gfollow#run_f ( Abstract.get_underlying_type a pl) )
 			| TAbstract( { a_path = ([], "EnumValue") }, _ )
@@ -938,6 +940,8 @@ let configure gen =
 	let rec real_type t =
 		let t = gen.gfollow#run_f t in
 		match t with
+			| TAbstract (a, pl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+				real_type (Abstract.get_underlying_type a pl)
 			| TAbstract (a, pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 				real_type (Abstract.get_underlying_type a pl)
 			| TInst( { cl_path = (["haxe"], "Int32") }, [] ) -> gen.gcon.basic.tint

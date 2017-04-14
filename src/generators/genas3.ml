@@ -247,6 +247,8 @@ let rec type_str ctx t p =
 	match t with
 	| TEnum _ | TInst _ when List.memq t ctx.local_types ->
 		"*"
+	| TAbstract (a,pl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+		type_str ctx (Abstract.get_underlying_type a pl) p
 	| TAbstract (a,pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 		type_str ctx (Abstract.get_underlying_type a pl) p
 	| TAbstract (a,_) ->

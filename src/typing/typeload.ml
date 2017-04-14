@@ -306,6 +306,8 @@ let apply_macro ctx mode path el p =
 	) in
 	ctx.g.do_macro ctx mode cpath meth el p
 
+let type_module_with_decls_ref:(Typecore.typer -> Type.path -> string -> type_decl list -> pos -> Type.module_def) ref = ref (fun _ _ _ _ _ -> assert false)
+
 (** since load_type_def and load_instance are used in PASS2, they should not access the structure of a type **)
 
 (*
@@ -337,7 +339,10 @@ let rec load_type_def ctx p t =
 					| "std" :: l ->
 						let t = { t with tpackage = l } in
 						t, ctx.g.do_load_module ctx (t.tpackage,t.tname) p
-					| _ -> raise e
+					| _ ->
+						let error() = raise e in
+ 						ignore(Exttyper.OnTheFly.create_type ctx ctx.Typecore.com t.tname error !type_module_with_decls_ref);
+ 						t, ctx.g.do_load_module ctx (t.tpackage,t.tname) p
 				) in
 				let tpath = (t.tpackage,tname) in
 				try
@@ -3381,7 +3386,7 @@ let init_module_type ctx context_init do_init (decl,p) =
 			| AToType t -> a.a_to <- (load_type t false) :: a.a_to
 			| AIsType t ->
 				if a.a_impl = None then error "Abstracts with underlying type must have an implementation" a.a_pos;
-				if Meta.has Meta.CoreType a.a_meta then error "@:coreType abstracts cannot have an underlying type" p;
+				if not (Meta.has Meta.AllowUnderlyingType a.a_meta) && Meta.has Meta.CoreType a.a_meta then error "@:coreType abstracts cannot have an underlying type" p;
 				let at = load_complex_type ctx true p t in
 				delay ctx PForce (fun () ->
 					begin match follow at with
@@ -4221,3 +4226,7 @@ let on_inherit ctx c p (is_extends,tp) =
 		true
 	| _ ->
 		true
+
+;;
+
+type_module_with_decls_ref := (fun ctx m file tdecls p -> type_module ctx m file tdecls p);
