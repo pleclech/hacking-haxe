@@ -336,16 +336,21 @@ module OnTheFly = struct
 		Parser.parse_string ctx code p Error.error true, tname, p
 
 	let mk_OneOf ctx tname name arity =
-		let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_sargs ~sfx:sfx n arity) in
-		let tas = s_args "T" in
-		let fps = s_args ~sep:" from " "T" in
-		let from =
-			if arity < 2 then ""
-			else 
-				let i = arity - 1 in
-				Printf.sprintf " from %s%i<%s> " name i (String.concat "," (mk_sargs "T" i))
-		in
-		let s = Printf.sprintf "@:allowUnderlyingType @:unorderedCheckTypeParameter @:coreType abstract %s<%s>(Any) from %s%s {public inline function new(v:Any) this=v;}" tname tas fps from in
+		let s =
+			if arity > 0 then
+				let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_sargs ~sfx:sfx n arity) in
+				let tas = s_args "T" in
+				let fps = s_args ~sep:" from " "T" in
+				let from =
+					if arity < 2 then ""
+					else 
+						let i = arity - 1 in
+						Printf.sprintf " from %s%i<%s> " name i (String.concat "," (mk_sargs "T" i))
+				in
+				Printf.sprintf "@:allowUnderlyingType @:unorderedCheckTypeParameter @:coreType @:forward abstract %s<%s>(OneOf0) from %s%s {public inline function new(v:Any) this=v;}" tname tas fps from
+			else
+				"abstract OneOf0(Any) from Any {}"
+		in		
     	create_type tname ctx s
 	
 	let type_factories = [("OneOf", mk_OneOf)]
@@ -370,7 +375,6 @@ module OnTheFly = struct
 
 	let get_create_factory tname =
 		let n,i = get_arity tname in
-		if i < 1 then raise Not_found;
 		let tf = find_type_factory n in
 		n,i,tf
 

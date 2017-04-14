@@ -3961,7 +3961,48 @@ and display_expr ctx e_ast e with_type p =
 						| EConst(Ident s) -> Some s
 						| _ -> None
 					) el in
-					let fields = get_fields (apply_params a.a_params pl a.a_this) in
+					let fields =
+						match a.a_this with
+						| TAbstract({a_path=([],"OneOf0"); _}, _) ->
+							(match a.a_path with
+							| [], "OneOf1" -> get_fields (List.hd pl)
+							| _ ->
+								let m_fields = List.map (fun t ->
+									get_fields t
+								) pl in
+								match m_fields with
+								| m::ms ->
+									let rec eq ms k cf1 nm =
+										match ms with
+										| [] ->
+											PMap.add k cf1 nm
+										| m'::ms' ->
+											(try
+												let cf2 = PMap.find k m' in
+												if type_iseq cf1.cf_type cf2.cf_type then
+													let doc = match cf1.cf_doc with
+														| None -> cf2.cf_doc
+														| Some s -> 
+															(match cf2.cf_doc with
+															| None -> cf1.cf_doc
+															| Some s2 -> Some (s^"--- "^s2)
+															)
+													in
+													eq ms' k {cf1 with cf_doc=doc} nm
+												else 
+													PMap.remove k nm
+											with
+												| Not_found -> PMap.remove k nm
+											)
+									in
+									PMap.foldi (eq ms) m m
+								| _ -> raise Not_found
+								(*List.iter (fun p -> Printf.printf "\n%!"; PMap.iter( fun k v -> Printf.printf "%s\n" k) p) m_fields;
+							 	get_fields (apply_params a.a_params pl a.a_this)*)
+							)
+						| _ -> get_fields (apply_params a.a_params pl a.a_this)
+					in
+					(*let fields = get_fields (apply_params a.a_params pl a.a_this) in*)
 					if sl = [] then fields else PMap.fold (fun cf acc ->
 						if List.mem cf.cf_name sl then
 							PMap.add cf.cf_name cf acc
