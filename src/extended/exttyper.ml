@@ -339,7 +339,13 @@ module OnTheFly = struct
 		let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_sargs ~sfx:sfx n arity) in
 		let tas = s_args "T" in
 		let fps = s_args ~sep:" from " "T" in
-		let s = Printf.sprintf "@:allowUnderlyingType @:unorderedCheckTypeParameter @:coreType abstract %s<%s>(Any) from %s {public inline function new(v:Any) this=v;}" tname tas fps in
+		let from =
+			if arity < 2 then ""
+			else 
+				let i = arity - 1 in
+				Printf.sprintf " from %s%i<%s> " name i (String.concat "," (mk_sargs "T" i))
+		in
+		let s = Printf.sprintf "@:allowUnderlyingType @:unorderedCheckTypeParameter @:coreType abstract %s<%s>(Any) from %s%s {public inline function new(v:Any) this=v;}" tname tas fps from in
     	create_type tname ctx s
 	
 	let type_factories = [("OneOf", mk_OneOf)]
