@@ -346,11 +346,16 @@ module AbstractCast = struct
 			cast_stack := List.tl !cast_stack;
 			r
 		in
+		let warned_ref = ref true in
 		let when_found a tl cf eright tleft p =
 			if (Meta.has Meta.MultiType a.a_meta) then
 				mk_cast eright tleft p
 			else match a.a_impl with
 				| Some c -> recurse cf (fun () ->
+					if (!warned_ref) && Common.defined ctx.com Common.Define.WarnOnImplicitConversion then begin
+						warned_ref := false;
+						(!Refs.warning_ref) (Printf.sprintf "Implicit conversion for %s to %s" (Refs.expr_to_s eright) (s_type_kind tleft)) p
+					end;
 					let ret = make_static_call ctx c cf a tl [eright] tleft p in
 					{ ret with eexpr = TMeta( (Meta.ImplicitCast,[],ret.epos), ret) }
 				)
