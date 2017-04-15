@@ -2,20 +2,22 @@ open Meta
 open Type
 open Error
 
-let find_to ab pl b =
+let find_to ?(legacy=ref false) ab pl b =
 	if follow b == t_dynamic then
 		List.find (fun (t,_) -> follow t == t_dynamic) ab.a_to_field
-	else if List.exists (unify_to ab pl ~allow_transitive_cast:false b) ab.a_to then
+	else if List.exists (unify_to ab pl ~allow_transitive_cast:false b) ab.a_to then begin
+		legacy := true;
 		raise Not_found (* legacy compatibility *)
-	else
+	end else
 		List.find (unify_to_field ab pl b) ab.a_to_field
 
-let find_from ab pl a b =
+let find_from ?(legacy=ref false) ab pl a b =
 	if follow a == t_dynamic then
 		List.find (fun (t,_) -> follow t == t_dynamic) ab.a_from_field
-	else if List.exists (unify_from ab pl a ~allow_transitive_cast:false b) ab.a_from then
+	else if List.exists (unify_from ab pl a ~allow_transitive_cast:false b) ab.a_from then begin
+		legacy := true;
 		raise Not_found (* legacy compatibility *)
-	else
+	end else
 		List.find (unify_from_field ab pl a b) ab.a_from_field
 
 let underlying_type_stack = ref []

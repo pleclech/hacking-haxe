@@ -371,10 +371,11 @@ module AbstractCast = struct
 			let is_ta = Refs.is_transitive_abstract() in
 			let rec loop tleft tright = match follow tleft,follow tright with
 			| TAbstract(a1,tl1) as ftleft, TAbstract(a2,tl2) ->
-					begin try find a2 tl2 (fun () -> Abstract.find_to a2 tl2 tleft)
-					with Not_found -> try find a1 tl1 (fun () -> Abstract.find_from a1 tl1 eright.etype tleft)
+					let legacy = ref false in
+					begin try find a2 tl2 (fun () -> Abstract.find_to ~legacy:legacy a2 tl2 tleft)
+					with Not_found -> try find a1 tl1 (fun () -> Abstract.find_from ~legacy:legacy a1 tl1 eright.etype tleft)
 					with Not_found -> 
-						if is_ta then
+						if is_ta && not !legacy then
 							Exttyper.Transitive.make_cast_with_module ctx.m.curmod cast_stack when_found ftleft eright p
 						else
 							raise Not_found
