@@ -4230,3 +4230,4 @@ let on_inherit ctx c p (is_extends,tp) =
 ;;
 
 type_module_with_decls_ref := (fun ctx m file tdecls p -> type_module ctx m file tdecls p);
+Exttyper.set_return_partial_type_ref :=  (fun b -> return_partial_type := b);

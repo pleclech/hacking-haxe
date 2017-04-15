@@ -328,6 +328,13 @@ let rec can_access ctx ?(in_overload=false) c cf stat =
 	if b && Common.defined ctx.com Common.Define.As3 && not (Meta.has Meta.Public cf.cf_meta) then cf.cf_meta <- (Meta.Public,[],cf.cf_pos) :: cf.cf_meta;
 	b
 
+let should_access ctx c cf stat =
+	if c != ctx.curclass && not cf.cf_public && String.length cf.cf_name > 4 then begin match String.sub cf.cf_name 0 4 with
+		| "get_" | "set_" -> false
+		| _ -> can_access ctx c cf stat
+	end else
+		can_access ctx c cf stat
+
 (* removes the first argument of the class field's function type and all its overloads *)
 let prepare_using_field cf = match follow cf.cf_type with
 	| TFun((_,_,tf) :: args,ret) ->
@@ -1355,6 +1362,12 @@ and type_field ?(resume=false) ctx e i p mode =
 			| TAbstract(a,_) when has_special_field a ->
 				(* the abstract field is not part of the field list, which is only true when it has no expression (issue #2344) *)
 				display_error ctx ("Field " ^ i ^ " cannot be called directly because it has no expression") p;
+			| TAbstract({a_this=TAbstract({a_path=([], "OneOf0")}, _)}, _) ->
+				(try
+					ignore(Exttyper.OneOf.find_field ctx should_access t i p)
+				with Not_found ->
+					display_error ctx (StringError.string_error i (string_source t) (s_type (print_context()) t ^ " has no field " ^ i)) p
+				)
 			| _ ->
 				display_error ctx (StringError.string_error i (string_source t) (s_type (print_context()) t ^ " has no field " ^ i)) p;
 		end;
@@ -4728,4 +4741,5 @@ type_module_type_ref := type_module_type;
 find_array_access_raise_ref := AbstractCast.find_array_access_raise;
 build_call_ref := build_call;
 merge_core_doc_ref := merge_core_doc;
-MacroContext.unify_call_args_ref := unify_call_args
+MacroContext.unify_call_args_ref := unify_call_args;
+Exttyper.prepare_using_field_ref := prepare_using_field;

@@ -1,7 +1,11 @@
+open Ast
 open Globals
 open Meta
 open Type
 open Error
+
+let prepare_using_field_ref:(tclass_field -> tclass_field) ref = ref (fun _ -> assert false)
+let set_return_partial_type_ref:(bool -> unit) ref = ref (fun _ -> assert false)
 
 module AbstractGraph = struct
 	type tp = t
@@ -385,3 +389,128 @@ module OnTheFly = struct
 			type_module ctx ([], cn) p.pfile decls p
 		with Not_found -> error()
 end
+
+module OneOf = struct
+		let opt_args args ret = TFun(List.map(fun (n,o,t) -> n,true,t) args,ret)
+
+		let opt_type t =
+			match t with
+			| TLazy f ->
+				(!set_return_partial_type_ref) true;
+				let t = (!f)() in
+				(!set_return_partial_type_ref) false;
+				t
+			| _ ->
+				t
+
+		let find_field ctx should_access t fname p =
+			let opt_args args ret = TFun(List.map(fun (n,o,t) -> n,true,t) args,ret) in
+			let opt_type t =
+				match t with
+				| TLazy f ->
+					(!set_return_partial_type_ref) true;
+					let t = (!f)() in
+					(!set_return_partial_type_ref) false;
+					t
+				| _ ->
+					t
+			in
+			let rec get_fields t =
+				match follow t with
+				| TInst (c,params) ->
+					let merge ?(cond=(fun _ -> true)) a b =
+						PMap.foldi (fun k f m -> if cond f then PMap.add k f m else m) a b
+					in
+					let rec loop c params =
+						let m = List.fold_left (fun m (i,params) ->
+							merge m (loop i params)
+						) PMap.empty c.cl_implements in
+						let m = (match c.cl_super with
+							| None -> m
+							| Some (csup,cparams) -> merge m (loop csup cparams)
+						) in
+						let m = merge ~cond:(fun f -> should_access ctx c f false) c.cl_fields m in
+						let m = (match c.cl_kind with
+							| KTypeParameter pl -> List.fold_left (fun acc t -> merge acc (get_fields t)) m pl
+							| _ -> m
+						) in
+						PMap.map (fun f -> { f with cf_type = apply_params c.cl_params params (opt_type f.cf_type); cf_public = true; }) m
+					in
+					loop c params
+				| TAbstract({a_impl = Some c} as a,pl) ->
+					let fields = try
+						let _,el,_ = Meta.get Meta.Forward a.a_meta in
+						let sl = ExtList.List.filter_map (fun e -> match fst e with
+							| EConst(Ident s) -> Some s
+							| _ -> None
+						) el in
+						let fields =
+							match a.a_this with
+							| TAbstract({a_path=([],"OneOf0"); _}, _) ->
+								(match a.a_path with
+								| [], "OneOf1" -> get_fields (List.hd pl)
+								| _ ->
+									let m_fields = List.map (fun t ->
+										get_fields t
+									) pl in
+									match m_fields with
+									| m::ms ->
+										let rec eq ms k cf1 nm =
+											match ms with
+											| [] ->
+												PMap.add k cf1 nm
+											| m'::ms' ->
+												(try
+													let cf2 = PMap.find k m' in
+													if type_iseq cf1.cf_type cf2.cf_type then
+														eq ms' k cf1 nm
+													else 
+														PMap.remove k nm
+												with
+													| Not_found -> PMap.remove k nm
+												)
+										in
+										PMap.foldi (eq ms) m m
+									| _ -> raise Not_found
+								)
+							| _ -> get_fields (apply_params a.a_params pl a.a_this)
+						in
+						if sl = [] then fields else PMap.fold (fun cf acc ->
+							if List.mem cf.cf_name sl then
+								PMap.add cf.cf_name cf acc
+							else
+								acc
+						) fields PMap.empty
+					with Not_found ->
+						PMap.empty
+					in
+					PMap.fold (fun f acc ->
+						if f.cf_name <> "_new" && should_access ctx c f true && Meta.has Meta.Impl f.cf_meta && not (Meta.has Meta.Enum f.cf_meta) then begin
+							let f = (!prepare_using_field_ref) f in
+							let t = apply_params a.a_params pl (follow f.cf_type) in
+							PMap.add f.cf_name { f with cf_public = true; cf_type = opt_type t } acc
+						end else
+							acc
+					) c.cl_statics fields
+				| TAnon a ->
+					(match !(a.a_status) with
+					| Statics c ->
+						let is_abstract_impl = match c.cl_kind with KAbstractImpl _ -> true | _ -> false in
+						let pm = match c.cl_constructor with None -> PMap.empty | Some cf -> PMap.add "new" cf PMap.empty in
+						PMap.fold (fun f acc ->
+							if should_access ctx c f true && (not is_abstract_impl || not (Meta.has Meta.Impl f.cf_meta) || Meta.has Meta.Enum f.cf_meta) then
+								PMap.add f.cf_name { f with cf_public = true; cf_type = opt_type f.cf_type } acc else acc
+						) a.a_fields pm
+					| _ ->
+						a.a_fields)
+				| TFun (args,ret) ->
+					let t = opt_args args ret in
+					let cf = mk_field "bind" (tfun [t] t) p null_pos in
+					PMap.add "bind" cf PMap.empty
+				| _ ->
+					PMap.empty
+			in
+			let fields = get_fields t in
+			PMap.find fname fields
+end
+
