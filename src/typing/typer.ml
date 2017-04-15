@@ -4226,6 +4226,18 @@ and type_call ctx e el (with_type:with_type) p =
 				PMap.iter (fun _ (_,p) -> display_error ctx "Capture variables are not allowed" p) locals; *)
 				e
 			| _ -> def ())
+	| (EField((EConst(Ident "Std"),null_pos),"is"), _), [e1;e2] ->
+		let e1t = type_expr ctx e1 Value in
+		(match e1t.etype with
+		| TAbstract({a_this=TAbstract({a_path=([], "OneOf0")}, _)}, pl) ->
+			let e2t = type_expr ctx e2 Value in
+			if not (List.exists (type_iseq e2t.etype) pl) then begin
+				let stype e = s_type (print_context()) (e.etype) in
+				error (Printf.sprintf "%s can't be %s as it is not %s" (Refs.expr_to_s e1t) (Refs.expr_to_s e2t) (stype e1t) ) p;
+			end;
+			def()
+		| _ -> def() 
+		)
 	| (EConst (Ident "__unprotect__"),_) , [(EConst (String _),_) as e] ->
 		let e = type_expr ctx e Value in
 		if Common.platform ctx.com Flash then
