@@ -535,6 +535,7 @@ module Define = struct
 		| UseNekoc
 		| UseRttiDoc
 		| Vcproj
+		| WarnOnImplicitConversion
 		| NoMacroCache
 		| Last (* must be last *)
 
@@ -633,6 +634,7 @@ module Define = struct
 		| UseNekoc -> ("use_nekoc","Use nekoc compiler instead of internal one")
 		| UseRttiDoc -> ("use_rtti_doc","Allows access to documentation during compilation")
 		| Vcproj -> ("vcproj","GenCPP internal")
+		| WarnOnImplicitConversion -> ("warn_on_implicit_conversion", "Get a warning if an implicit conversion is done")
 		| Last -> assert false
 end
 
