@@ -346,7 +346,8 @@ module OnTheFly = struct
 				let tas = s_args "T" in
 				let fps = s_args ~sep:" from " "T" in
 				let from =
-					if arity < 2 then ""
+					if arity=1 then " to "^(s_args "T")
+					else if arity < 1 then ""
 					else 
 						let i = arity - 1 in
 						Printf.sprintf " from %s%i<%s> " name i (String.concat "," (mk_sargs "T" i))

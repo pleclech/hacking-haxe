@@ -168,7 +168,8 @@ let rec make_meta name params ((v,p2) as e) p1 =
 let make_is e (t,p_t) p p_is =
 	let e_is = EField((EConst(Ident "Std"),null_pos),"is"),p_is in
 	let e2 = expr_of_type_path (t.tpackage,t.tname) p_t in
-	ECall(e_is,[e;e2]),p
+	let e3 = EMeta((Meta.Rtti, [ECast (e,Some (CTPath t,p)), p], p), (e2)), p in
+	ECall(e_is,[e;e3]),p
 
 let reify in_macro =
 	let cur_pos = ref None in
