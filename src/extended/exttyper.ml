@@ -341,21 +341,21 @@ module OnTheFly = struct
 
 	let mk_OneOf ctx tname name arity =
 		let s =
-			if arity > 0 then
+			match arity with
+			| 0 -> "abstract OneOf0(Any) from Any {}"
+			| 1 -> "abstract OneOf1<T>(T) from T to T {public inline function new(v:T) this=v;}"
+			| _ ->
 				let s_args ?(sfx="") ?(sep=",") n = String.concat sep (mk_sargs ~sfx:sfx n arity) in
 				let tas = s_args "T" in
 				let fps = s_args ~sep:" from " "T" in
 				let from =
-					if arity=1 then " to "^(s_args "T")
-					else if arity < 1 then ""
+					if arity < 1 then ""
 					else 
 						let i = arity - 1 in
-						Printf.sprintf " from %s%i<%s> " name i (String.concat "," (mk_sargs "T" i))
+						(Printf.sprintf " from %s%i<%s> " name i (String.concat "," (mk_sargs "T" i)))
 				in
 				Printf.sprintf "@:allowUnderlyingType @:unorderedCheckTypeParameter @:coreType @:forward abstract %s<%s>(OneOf0) from %s%s {public inline function new(v:Any) this=v;}" tname tas fps from
-			else
-				"abstract OneOf0(Any) from Any {}"
-		in		
+		in
     	create_type tname ctx s
 	
 	let type_factories = [("OneOf", mk_OneOf)]

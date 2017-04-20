@@ -810,3 +810,30 @@ let augment_decls pack decls =
         pack, decls
 	end else
 		pack, decls
+
+let mk_true p = EConst (Ident "true"),p
+
+let mk_false p = EConst (Ident "false"),p
+
+let mk_cast e ot p = ECast(e, ot), p
+
+let mk_assign e1 e2 = EBinop(OpAssign, e1, e2), punion (pos e1) (pos e2)
+
+let rewrite_if cond e1 e2 p =
+    let vars = ref [] in
+    let map e =
+        match e with
+        | ECall((EField((EConst(Ident "Std"), _),"is"),p_is),[e1;(EMeta((Meta.Rtti, [ECast ((EConst(Ident vn),pv) as v, ((Some (CTPath t,pt)) as oct) ) , _], _), (e2)), _)]), p when not(e1==v) ->
+            let asg = mk_assign v (mk_cast e1 None p) in
+            let asg = EParenthesis(EBlock[asg; mk_true p], p), p in
+            vars := (EVars[((vn,pv), oct, None)], p)::!vars;
+            (EParenthesis(EBinop (OpBoolAnd, e, asg), p), p) 
+        | _ -> e
+    in 
+    let cond = Ast.map_expr map cond in
+    let eif = EIf (cond,e1,e2), p in
+    if !vars=[] then eif        
+    else
+        let bk = [eif] in
+        let bk = List.rev_append !vars bk in
+        EBlock bk, p

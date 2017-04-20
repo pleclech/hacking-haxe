@@ -168,8 +168,20 @@ let rec make_meta name params ((v,p2) as e) p1 =
 let make_is e (t,p_t) p p_is =
 	let e_is = EField((EConst(Ident "Std"),null_pos),"is"),p_is in
 	let e2 = expr_of_type_path (t.tpackage,t.tname) p_t in
-	let e3 = EMeta((Meta.Rtti, [ECast (e,Some (CTPath t,p)), p], p), (e2)), p in
-	ECall(e_is,[e;e3]),p
+	ECall(e_is,[e;e2]),p
+
+let make_is2 e ove t p p_is =
+	let e_is = EField((EConst(Ident "Std"),null_pos),"is"),p_is in
+	match t with
+	| CTPath t,p_t ->
+		let e2 = expr_of_type_path (t.tpackage,t.tname) p_t in
+		let ve = match ove with
+		| Some ve -> ve
+		| None -> e
+		in
+		let e3 = EMeta((Meta.Rtti, [ECast (ve,Some (CTPath t,p)), p], p), (e2)), p in
+		ECall(e_is,[e;e3]),p
+	| _ -> error (Custom "Invalid type for is") p
 
 let reify in_macro =
 	let cur_pos = ref None in
@@ -1511,7 +1523,11 @@ and expr ?(flags=0) s =
 	| [< '(POpen,p1); e = expr; s >] -> (match s with parser
 		| [< '(PClose,p2); s >] -> expr_next (EParenthesis e, punion p1 p2) s
 		| [< t,pt = parse_type_hint_with_pos; '(PClose,p2); s >] -> expr_next (EParenthesis (ECheckType(e,(t,pt)),punion p1 p2), punion p1 p2) s
-		| [< '(Const (Ident "is"),p_is); t = parse_type_path; '(PClose,p2); >] -> expr_next (make_is e t (punion p1 p2) p_is) s
+		| [< '(Const (Ident "is"),p_is); s; >] ->
+			begin match s with parser
+			| [< '(POpen,p3); e2 = expr; t,pt = parse_type_hint_with_pos; '(PClose,p4); '(PClose,p2); s >] -> expr_next (make_is2 e (Some e2) (t,pt) (punion p1 p2) p_is) s
+			| [< t,p = parse_type_path; '(PClose,p2); s >] -> expr_next (make_is2 e None (CTPath t, p) (punion p1 p2) p_is) s
+			end
 		| [< >] -> serror())
 	| [< '(BkOpen,p1); l = parse_array_decl; '(BkClose,p2); s >] -> expr_next (EArrayDecl l, punion p1 p2) s
 	| [< '(Kwd Function,p1); e = parse_function p1 false; >] -> e
@@ -1543,7 +1559,8 @@ and expr ?(flags=0) s =
 				| _ ->
 					None
 		) in
-		(EIf (cond,e1,e2), punion p (match e2 with None -> pos e1 | Some e -> pos e))
+		Extparser.rewrite_if cond e1 e2 (punion p (match e2 with None -> pos e1 | Some e -> pos e))
+(*		(EIf (cond,e1,e2), punion p (match e2 with None -> pos e1 | Some e -> pos e)) *)
 	| [< '(Kwd Return,p); e = popt expr >] -> (EReturn e, match e with None -> p | Some e -> punion p (pos e))
 	| [< '(Kwd Break,p) >] -> (EBreak,p)
 	| [< '(Kwd Continue,p) >] -> (EContinue,p)
