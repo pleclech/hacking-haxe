@@ -4236,7 +4236,7 @@ and type_call ctx e el (with_type:with_type) p =
 			in
 			if not (List.exists (is_eq) pl) then begin
 				let stype t = s_type (print_context()) (t) in
-				error (Printf.sprintf "%s can't be %s as it is not %s" (Refs.expr_to_s e1t) (stype e3t) (stype e1t.etype) ) p;
+				error (Printf.sprintf "%s can't be %s as it's %s" (Refs.expr_to_s e1t) (stype e3t) (stype e1t.etype) ) p;
 			end;
 			def()
 		| _ -> def() 
