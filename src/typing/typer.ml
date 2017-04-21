@@ -2081,62 +2081,79 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 		else
 			mk (TBinop (op,e1,e2)) t p
 	in
-	let make e1 e2 = match op with
+	let unify =
+		if Refs.is_transitive_abstract() then 
+			(fun ctx e t p -> AbstractCast.cast_or_unify ctx t e p) 
+		else 
+			(fun ctx e t p -> unify ctx e.etype t p; e)
+	in
+	let unify_int =
+		if Refs.is_transitive_abstract() then 
+			(fun ctx e_ref k -> let e = !e_ref in e_ref := AbstractCast.cast_or_unify ctx tint e e.epos;true) 
+		else 
+			(fun ctx e_ref k -> unify_int ctx !e_ref k)
+	in
+	let make e1 e2 =
+		let e1_ref = ref e1 in
+		let e2_ref = ref e2 in		
+	match op with
 	| OpAdd ->
-		mk_op e1 e2 (match classify e1.etype, classify e2.etype with
+		let e1,e2,t = (match classify e1.etype, classify e2.etype with
 		| KInt , KInt ->
-			tint
+			e1,e2,tint
 		| KFloat , KInt
 		| KInt, KFloat
 		| KFloat, KFloat ->
-			tfloat
+			e1,e2,tfloat
 		| KUnk , KInt ->
-			if unify_int ctx e1 KUnk then tint else tfloat
+			let t = if unify_int ctx e1_ref KUnk then tint else tfloat in
+			!e1_ref,e2,t
 		| KUnk , KFloat
 		| KUnk , KString  ->
-			unify ctx e1.etype e2.etype e1.epos;
-			e1.etype
+			let e1 = unify ctx e1 e2.etype e1.epos in
+			e1,e2,e1.etype
 		| KInt , KUnk ->
-			if unify_int ctx e2 KUnk then tint else tfloat
+			let t = if unify_int ctx e2_ref KUnk then tint else tfloat in
+			e1,!e2_ref,t
 		| KFloat , KUnk
 		| KString , KUnk ->
-			unify ctx e2.etype e1.etype e2.epos;
-			e2.etype
+			let e2 = unify ctx e2 e1.etype e2.epos in
+			e1,e2,e2.etype
 		| _ , KString
 		| KString , _ ->
-			tstring
+			e1,e2,tstring
 		| _ , KDyn ->
-			e2.etype
+			e1,e2,e2.etype
 		| KDyn , _ ->
-			e1.etype
+			e1,e2,e1.etype
 		| KUnk , KUnk ->
-			let ok1 = unify_int ctx e1 KUnk in
-			let ok2 = unify_int ctx e2 KUnk in
-			if ok1 && ok2 then tint else tfloat
+			let ok1 = unify_int ctx e1_ref KUnk in
+			let ok2 = unify_int ctx e2_ref KUnk in
+			!e1_ref,!e2_ref,if ok1 && ok2 then tint else tfloat
 		| KParam t1, KParam t2 when Type.type_iseq t1 t2 ->
-			t1
+			e1,e2,t1
 		| KParam t, KInt | KInt, KParam t ->
-			t
+			e1,e2,t
 		| KParam _, KFloat | KFloat, KParam _ | KParam _, KParam _ ->
-			tfloat
+			e1,e2,tfloat
 		| KParam t, KUnk ->
-			unify ctx e2.etype tfloat e2.epos;
-			tfloat
+			let e2 = unify ctx e2 tfloat e2.epos in
+			e1,e2,tfloat
 		| KUnk, KParam t ->
-			unify ctx e1.etype tfloat e1.epos;
-			tfloat
+			let e1 = unify ctx e1 tfloat e1.epos in
+			e1,e2,tfloat
 		| KAbstract _,KFloat ->
-			unify ctx e1.etype tfloat e1.epos;
-			tfloat
+			let e1 = unify ctx e1 tfloat e1.epos in
+			e1,e2,tfloat
 		| KFloat, KAbstract _ ->
-			unify ctx e2.etype tfloat e2.epos;
-			tfloat
+			let e2 = unify ctx e2 tfloat e2.epos in
+			e1,e2,tfloat
 		| KAbstract _,KInt ->
-			unify ctx e1.etype ctx.t.tint e1.epos;
-			ctx.t.tint
+			let e1 = unify ctx e1 ctx.t.tint e1.epos in
+			e1,e2,ctx.t.tint
 		| KInt, KAbstract _ ->
-			unify ctx e2.etype ctx.t.tint e2.epos;
-			ctx.t.tint
+			let e2 = unify ctx e2 ctx.t.tint e2.epos in
+			e1,e2,ctx.t.tint
 		| KAbstract _,_
 		| _,KAbstract _
 		| KParam _, _
@@ -2145,7 +2162,8 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 		| _ , KOther ->
 			let pr = print_context() in
 			error ("Cannot add " ^ s_type pr e1.etype ^ " and " ^ s_type pr e2.etype) p
-		)
+		) in
+		mk_op e1 e2 t
 	| OpAnd
 	| OpOr
 	| OpXor
@@ -2153,8 +2171,8 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 	| OpShr
 	| OpUShr ->
 		let i = tint in
-		unify ctx e1.etype i e1.epos;
-		unify ctx e2.etype i e2.epos;
+		let e1 = unify ctx e1 i e1.epos in
+		let e2 = unify ctx e2 i e2.epos in
 		mk_op e1 e2 i
 	| OpMod
 	| OpMult
@@ -2173,17 +2191,17 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 		| KParam _, KFloat | KFloat, KParam _ ->
 			result := tfloat
 		| KFloat, k ->
-			ignore(unify_int ctx e2 k);
+			ignore(unify_int ctx e2_ref k);
 			result := tfloat
 		| k, KFloat ->
-			ignore(unify_int ctx e1 k);
+			ignore(unify_int ctx e1_ref k);
 			result := tfloat
 		| k1 , k2 ->
-			let ok1 = unify_int ctx e1 k1 in
-			let ok2 = unify_int ctx e2 k2 in
+			let ok1 = unify_int ctx e1_ref k1 in
+			let ok2 = unify_int ctx e2_ref k2 in
 			if not ok1 || not ok2  then result := tfloat;
 		);
-		mk_op e1 e2 !result
+		mk_op !e1_ref !e2_ref !result
 	| OpEq
 	| OpNotEq ->
 		let e1,e2 = try
@@ -2198,19 +2216,24 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 	| OpGte
 	| OpLt
 	| OpLte ->
-		(match classify e1.etype, classify e2.etype with
-		| KInt , KInt | KInt , KFloat | KFloat , KInt | KFloat , KFloat | KString , KString -> ()
-		| KInt , KUnk -> ignore(unify_int ctx e2 KUnk)
-		| KFloat , KUnk | KString , KUnk -> unify ctx e2.etype e1.etype e2.epos
-		| KUnk , KInt -> ignore(unify_int ctx e1 KUnk)
-		| KUnk , KFloat | KUnk , KString -> unify ctx e1.etype e2.etype e1.epos
+		let e1,e2 = (match classify e1.etype, classify e2.etype with
+		| KInt , KInt | KInt , KFloat | KFloat , KInt | KFloat , KFloat | KString , KString -> e1,e2
+		| KInt , KUnk -> ignore(unify_int ctx e2_ref KUnk); e1,!e2_ref
+		| KFloat , KUnk | KString , KUnk ->
+			let e2 = unify ctx e2 e1.etype e2.epos in
+			e1,e2
+		| KUnk , KInt -> ignore(unify_int ctx e1_ref KUnk); !e1_ref,e2
+		| KUnk , KFloat | KUnk , KString ->
+			let e1 = unify ctx e1 e2.etype e1.epos in
+			e1,e2
 		| KUnk , KUnk ->
-			ignore(unify_int ctx e1 KUnk);
-			ignore(unify_int ctx e2 KUnk);
-		| KDyn , KInt | KDyn , KFloat | KDyn , KString -> ()
-		| KInt , KDyn | KFloat , KDyn | KString , KDyn -> ()
-		| KDyn , KDyn -> ()
-		| KParam _ , x | x , KParam _ when x <> KString && x <> KOther -> ()
+			ignore(unify_int ctx e1_ref KUnk);
+			ignore(unify_int ctx e2_ref KUnk);
+			!e1_ref,!e2_ref
+		| KDyn , KInt | KDyn , KFloat | KDyn , KString -> e1,e2
+		| KInt , KDyn | KFloat , KDyn | KString , KDyn -> e1,e2
+		| KDyn , KDyn -> e1,e2
+		| KParam _ , x | x , KParam _ when x <> KString && x <> KOther -> e1,e2
 		| KAbstract _,_
 		| _,KAbstract _
 		| KDyn , KUnk
@@ -2225,18 +2248,18 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 		| _ , KOther ->
 			let pr = print_context() in
 			error ("Cannot compare " ^ s_type pr e1.etype ^ " and " ^ s_type pr e2.etype) p
-		);
+		) in
 		mk_op e1 e2 ctx.t.tbool
 	| OpBoolAnd
 	| OpBoolOr ->
 		let b = ctx.t.tbool in
-		unify ctx e1.etype b p;
-		unify ctx e2.etype b p;
+		let e1 = unify ctx e1 b p in
+		let e2 = unify ctx e2 b p in
 		mk_op e1 e2 b
 	| OpInterval ->
 		let t = Typeload.load_core_type ctx "IntIterator" in
-		unify ctx e1.etype tint e1.epos;
-		unify ctx e2.etype tint e2.epos;
+		let e1 = unify ctx e1 tint e1.epos in
+		let e2 = unify ctx e2 tint e2.epos in
 		mk (TNew ((match t with TInst (c,[]) -> c | _ -> assert false),[],[e1;e2])) t p
 	| OpArrow ->
 		error "Unexpected =>" p
@@ -2369,27 +2392,33 @@ and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
 and type_unop ctx op flag e p =
 	let set = (op = Increment || op = Decrement) in
 	let acc = type_access ctx (fst e) (snd e) (if set then MSet else MGet) in
+	let unify =
+		if Refs.is_transitive_abstract() then 
+			(fun ctx e t p -> AbstractCast.cast_or_unify ctx t e p) 
+		else 
+			(fun ctx e t p -> unify ctx e.etype t p; e)
+	in
 	let access e =
 		let make e =
-			let t = (match op with
+			let e,t = (match op with
 			| Not ->
 				if flag = Postfix then error "Postfix ! is not supported" p;
-				unify ctx e.etype ctx.t.tbool e.epos;
-				ctx.t.tbool
+				let e = unify ctx e ctx.t.tbool e.epos in
+				e,ctx.t.tbool
 			| NegBits ->
-				unify ctx e.etype ctx.t.tint e.epos;
-				ctx.t.tint
+				let e = unify ctx e ctx.t.tint e.epos in
+				e,ctx.t.tint
 			| Increment
 			| Decrement
 			| Neg ->
 				if set then check_assign ctx e;
 				(match classify e.etype with
-				| KFloat -> ctx.t.tfloat
+				| KFloat -> e,ctx.t.tfloat
 				| KParam t ->
-					unify ctx e.etype ctx.t.tfloat e.epos;
-					t
+					let e = unify ctx e ctx.t.tfloat e.epos in
+					e,t
 				| k ->
-					if unify_int ctx e k then ctx.t.tint else ctx.t.tfloat)
+					e,if unify_int ctx e k then ctx.t.tint else ctx.t.tfloat)
 			) in
 			mk (TUnop (op,flag,e)) t p
 		in
@@ -2461,7 +2490,7 @@ and type_unop ctx op flag e p =
 			match flag with
 			| Prefix ->
 				let get = type_binop ctx op eget one false Value p in
-				unify ctx get.etype t p;
+				let get = unify ctx get t p in
 				l();
 				mk (TBlock [
 					mk (TVar (v,Some e)) ctx.t.tvoid p;
@@ -2472,7 +2501,7 @@ and type_unop ctx op flag e p =
 				let ev2 = mk (TLocal v2) t p in
 				let get = type_expr ctx eget Value in
 				let plusone = type_binop ctx op (EConst (Ident v2.v_name),p) one false Value p in
-				unify ctx get.etype t p;
+				let get = unify ctx get t p in
 				l();
 				mk (TBlock [
 					mk (TVar (v,Some e)) ctx.t.tvoid p;
