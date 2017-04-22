@@ -1155,8 +1155,9 @@ let rec using_field ctx mode e i p =
 	| [] ->
 		raise Not_found
 	| (c,pc) :: l ->
-		try
-			let cf = PMap.find i c.cl_statics in
+		let using i c oe =
+			let fields = if oe=None then c.cl_statics else c.cl_fields in
+			let cf = PMap.find i fields in
 			if Meta.has Meta.NoUsing cf.cf_meta || not (can_access ctx c cf true) || (Meta.has Meta.Impl cf.cf_meta) then raise Not_found;
 			let monos = List.map (fun _ -> mk_mono()) cf.cf_params in
 			let map = apply_params cf.cf_params monos in
@@ -1171,14 +1172,39 @@ let rec using_field ctx mode e i p =
 							List.iter (fun tc -> Type.unify m (map tc)) constr
 						| _ -> ()
 					) monos cf.cf_params;
-					let et = type_module_type ctx (TClassDecl c) None p in
 					Display.ImportHandling.maybe_mark_import_position ctx pc;
-					AKUsing (mk (TField (et,FStatic (c,cf))) t p,c,cf,e)
+					let tf =
+						match oe with
+						| None ->
+							let et = type_module_type ctx (TClassDecl c) None p in
+							mk (TField (et,FStatic (c,cf))) t p
+						| Some e -> mk (TField (e, FInstance (c, monos, cf))) t p 
+					in
+					AKUsing (tf,c,cf,e)
 				| _ ->
 					raise Not_found
 			end
+		in
+		try
+			using i c None
 		with Not_found ->
-			loop l
+			if Meta.has Meta.HasObjectSingleton c.cl_meta then begin
+				let cn = (snd c.cl_path) in
+				try
+					let cf = PMap.find cn c.cl_statics in
+					(match follow cf.cf_type with
+					| TInst(c1, _) ->
+						let t = (field_type ctx c [] cf p) in
+						let et = type_module_type ctx (TClassDecl c) None p in
+						let ef = mk (TField (et,FStatic (c, cf))) t p in
+						let ak = using i c1 (Some ef) in
+						add_dependency ctx.m.curmod c.cl_module;
+						ak
+					| _ -> raise Not_found
+					)
+				with Not_found -> loop l
+			end
+			else loop l
 		| Unify_error el | Error (Unify el,_) ->
 			if List.exists (function Has_extra_field _ -> true | _ -> false) el then check_constant_struct := true;
 			loop l
@@ -4095,31 +4121,39 @@ and display_expr ctx e_ast e with_type p =
 			| (c,_) :: l ->
 				let acc = ref (loop acc l) in
 				let rec dup t = Type.map dup t in
-				List.iter (fun f ->
-					if not (Meta.has Meta.NoUsing f.cf_meta) then
-					let f = { f with cf_type = opt_type f.cf_type } in
-					let monos = List.map (fun _ -> mk_mono()) f.cf_params in
-					let map = apply_params f.cf_params monos in
-					match follow (map f.cf_type) with
-					| TFun((_,_,TType({t_path=["haxe";"macro"], "ExprOf"}, [t])) :: args, ret)
-					| TFun((_,_,t) :: args, ret) ->
-						(try
-							unify_raise ctx (dup e.etype) t e.epos;
-							List.iter2 (fun m (name,t) -> match follow t with
-								| TInst ({ cl_kind = KTypeParameter constr },_) when constr <> [] ->
-									List.iter (fun tc -> unify_raise ctx m (map tc) e.epos) constr
-								| _ -> ()
-							) monos f.cf_params;
-							if not (can_access ctx c f true) || follow e.etype == t_dynamic && follow t != t_dynamic then
-								()
-							else begin
-								let f = prepare_using_field f in
-								let f = { f with cf_params = []; cf_public = true; cf_type = TFun(args,ret) } in
-								acc := PMap.add f.cf_name f (!acc)
-							end
-						with Error (Unify _,_) -> ())
-					| _ -> ()
-				) c.cl_ordered_statics;
+				let using f =
+					let inner f =
+						if not (Meta.has Meta.NoUsing f.cf_meta) then
+						let f = { f with cf_type = opt_type f.cf_type } in
+						let monos = List.map (fun _ -> mk_mono()) f.cf_params in
+						let map = apply_params f.cf_params monos in
+						match follow (map f.cf_type) with
+						| TFun((_,_,TType({t_path=["haxe";"macro"], "ExprOf"}, [t])) :: args, ret)
+						| TFun((_,_,t) :: args, ret) ->
+							(try
+								unify_raise ctx (dup e.etype) t e.epos;
+								List.iter2 (fun m (name,t) -> match follow t with
+									| TInst ({ cl_kind = KTypeParameter constr },_) when constr <> [] ->
+										List.iter (fun tc -> unify_raise ctx m (map tc) e.epos) constr
+									| _ -> ()
+								) monos f.cf_params;
+								if not (can_access ctx c f true) || follow e.etype == t_dynamic && follow t != t_dynamic then
+									()
+								else begin
+									let f = prepare_using_field f in
+									let f = { f with cf_params = []; cf_public = true; cf_type = TFun(args,ret) } in
+									acc := PMap.add f.cf_name f (!acc)
+								end
+							with Error (Unify _,_) -> ())
+						| _ -> ()
+					in
+					if Meta.has Meta.HasObjectSingleton c.cl_meta && f.cf_name=(snd c.cl_path) then
+						match follow f.cf_type with
+						| TInst(c, _) -> List.iter inner c.cl_ordered_fields
+						| _ -> ()
+					else inner f
+				in
+				List.iter using c.cl_ordered_statics;
 				!acc
 		in
 		let use_methods = match follow e.etype with TMono _ -> PMap.empty | _ -> loop (loop PMap.empty ctx.g.global_using) ctx.m.module_using in

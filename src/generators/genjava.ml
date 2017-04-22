@@ -1000,7 +1000,8 @@ let configure gen =
 
 	let path_s_import pos path meta = match path with
 		| [], name when PMap.mem name !scope ->
-				gen.gcon.error ("This expression cannot be generated because " ^ name ^ " is shadowed by the current scope") pos;
+				if not(Meta.has Meta.HasObjectSingleton meta) then
+					gen.gcon.error ("This expression cannot be generated because " ^ name ^ " is shadowed by the current scope") pos;
 				name
 		| pack1 :: _, name when PMap.mem pack1 !scope -> (* exists in scope *)
 				add_import pos path meta;
@@ -1252,8 +1253,9 @@ let configure gen =
 		List.rev !ret
 	in
 
-	let expr_s w e =
+	let expr_s ?(namespace="") ?(cl_path=([],"")) w e =
 		in_value := false;
+		let cname = snd cl_path in
 		let rec expr_s w e =
 			let was_in_value = !in_value in
 			in_value := true;
@@ -1316,7 +1318,16 @@ let configure gen =
 					write w (path_s_import e.epos (["haxe"], "Int32") [])
 				| TTypeExpr (TClassDecl { cl_path = (["haxe"], "Int64") }) ->
 					write w (path_s_import e.epos (["haxe"], "Int64") [])
-				| TTypeExpr mt -> write w (md_s e.epos mt)
+				| TTypeExpr ((TClassDecl c) as mt) ->
+					let ns = md_s e.epos mt in
+					(match (fst c.cl_path) with
+					| [] when (snd c.cl_path)=cname && (not ((namespace^cname)=ns)) ->
+						write w namespace
+					| _ -> ()
+					);
+					write w ns
+				| TTypeExpr mt ->
+					write w (md_s e.epos mt)
 				| TParenthesis e ->
 					write w "("; expr_s w e; write w ")"
 				| TMeta (_,e) ->
@@ -1711,7 +1722,7 @@ let configure gen =
 		write w (String.concat " " parts)
 	in
 
-	let rec gen_class_field w ?(is_overload=false) is_static cl is_final cf =
+	let rec gen_class_field ?(namespace="") w ?(is_overload=false) is_static cl is_final cf =
 		let is_interface = cl.cl_interface in
 		let name, is_new, is_explicit_iface = match cf.cf_name with
 			| "new" -> snd cl.cl_path, true, false
@@ -1738,13 +1749,13 @@ let configure gen =
 				end (* TODO see how (get,set) variable handle when they are interfaces *)
 			| Method _ when Type.is_extern_field cf || (match cl.cl_kind, cf.cf_expr with | KAbstractImpl _, None -> true | _ -> false) ->
 				List.iter (fun cf -> if cl.cl_interface || cf.cf_expr <> None then
-					gen_class_field w ~is_overload:true is_static cl (Meta.has Meta.Final cf.cf_meta) cf
+					gen_class_field ~namespace:namespace w ~is_overload:true is_static cl (Meta.has Meta.Final cf.cf_meta) cf
 				) cf.cf_overloads
 			| Var _ | Method MethDynamic -> ()
 			| Method mkind ->
 				List.iter (fun cf ->
 					if cl.cl_interface || cf.cf_expr <> None then
-						gen_class_field w ~is_overload:true is_static cl (Meta.has Meta.Final cf.cf_meta) cf
+						gen_class_field ~namespace:namespace w ~is_overload:true is_static cl (Meta.has Meta.Final cf.cf_meta) cf
 				) cf.cf_overloads;
 				let is_virtual = is_new || (not is_final && match mkind with | MethInline -> false | _ when not is_new -> true | _ -> false) in
 				let is_override = match cf.cf_name with
@@ -1831,9 +1842,9 @@ let configure gen =
 											| _ ->
 												None, el
 									in*)
-									expr_s w expr
+									expr_s ~cl_path:cl.cl_path  ~namespace:namespace w expr
 								end else begin
-									expr_s w expr;
+									expr_s ~cl_path:cl.cl_path  ~namespace:namespace w expr;
 								end)
 							| (Meta.Throws, [Ast.EConst (Ast.String t), _], _) :: tl ->
 								print w " throws %s" t;
@@ -1855,13 +1866,15 @@ let configure gen =
 		let cf_filters = [ handle_throws ] in
 		List.iter (fun f -> List.iter (f gen) cl.cl_ordered_fields) cf_filters;
 		List.iter (fun f -> List.iter (f gen) cl.cl_ordered_statics) cf_filters;
-		let should_close = match change_ns (fst cl.cl_path) with
-			| [] -> false
+		let namespace,should_close = match change_ns (fst cl.cl_path) with
+			| [] -> "", false
 			| ns ->
-				print w "package %s;" (String.concat "." (change_ns ns));
+				let ns = (String.concat "." (change_ns ns)) in
+				print w "package %s;" ns;
 				newline w;
 				newline w;
-				false
+				let ns = if ns="" then ns else ns^"." in
+				ns, false
 		in
 
 		let rec loop_meta meta acc =
@@ -1971,13 +1984,13 @@ let configure gen =
 			| None -> ()
 			| Some init ->
 				write w "static";
-				expr_s w (mk_block init);
+				expr_s ~namespace:namespace ~cl_path:cl.cl_path w (mk_block init);
 				newline w
 		);
 
-		(if is_some cl.cl_constructor then gen_class_field w false cl is_final (get cl.cl_constructor));
-		(if not cl.cl_interface then List.iter (gen_class_field w true cl is_final) cl.cl_ordered_statics);
-		List.iter (gen_class_field w false cl is_final) cl.cl_ordered_fields;
+		(if is_some cl.cl_constructor then gen_class_field ~namespace:namespace w false cl is_final (get cl.cl_constructor));
+		(if not cl.cl_interface then List.iter (gen_class_field ~namespace:namespace w true cl is_final) cl.cl_ordered_statics);
+		List.iter (gen_class_field ~namespace:namespace w false cl is_final) cl.cl_ordered_fields;
 
 		end_block w;
 		if should_close then end_block w;
