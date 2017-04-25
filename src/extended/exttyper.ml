@@ -4,6 +4,8 @@ open Meta
 open Type
 open Error
 
+exception WithTypeError of error_msg * pos
+
 let prepare_using_field_ref:(tclass_field -> tclass_field) ref = ref (fun _ -> assert false)
 let set_return_partial_type_ref:(bool -> unit) ref = ref (fun _ -> assert false)
 
@@ -515,3 +517,48 @@ module OneOf = struct
 			PMap.find fname fields
 end
 
+module Implicit = struct
+	let id = ref 0
+	let mk_fresh_var add_local type_against oet =
+		incr id;
+		let vn = Printf.sprintf "_iv_%d" !id in
+		let tv = add_local vn oet.etype null_pos in
+		let ev = (EConst(Ident vn), null_pos) in
+		let tv =
+		{
+			eexpr=TVar(tv, Some oet);
+			etype=oet.etype;
+			epos=null_pos;
+		} 
+		in
+		type_against ev, tv
+
+	let search_and_allocate type_expr type_against add_local implicits =
+		let oet = ref None in
+		ignore(List.exists (fun f ->
+			let e = f() in
+			try
+				let et = type_expr e in
+				type_against e;
+				oet := Some et;
+				true
+			with WithTypeError (ul,p)-> false
+		) implicits);
+		match !oet with
+		| None -> raise Not_found
+		| Some et -> mk_fresh_var add_local type_against et
+
+	let resolver type_expr type_against add_local =
+		let implicit_vars = ref [] in
+		(fun t implicits ->
+			let et,tv =search_and_allocate type_expr (type_against t) add_local implicits in 
+			implicit_vars := tv :: !implicit_vars;
+			et
+		),
+		(fun with_implicit -> match !implicit_vars with
+			| [] -> ()
+			| x::xs ->
+				let blk = List.rev !implicit_vars in
+				with_implicit (List.rev !implicit_vars)
+		)
+end

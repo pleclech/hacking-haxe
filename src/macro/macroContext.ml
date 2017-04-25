@@ -497,6 +497,7 @@ let load_macro ctx display cpath f p =
 			module_globals = PMap.empty;
 			wildcard_packages = [];
 			module_imports = [];
+			module_implicits = [];
 		};
 		add_dependency ctx.m.curmod mloaded;
 		let mt = Typeload.load_type_def mctx p { tpackage = fst cpath; tname = snd cpath; tparams = []; tsub = sub } in
@@ -521,6 +522,7 @@ let load_macro ctx display cpath f p =
 			module_globals = PMap.empty;
 			wildcard_packages = [];
 			module_imports = [];
+			module_implicits = [];
 		};
 		t();
 		meth

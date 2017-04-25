@@ -532,7 +532,7 @@ let is_forced_inline c cf =
 	| _ when Meta.has Meta.Extern cf.cf_meta -> true
 	| _ -> false
 
-let rec unify_call_args' ctx el args r callp inline force_inline =
+let rec unify_call_args' ?(meta=[]) ctx el args r callp inline force_inline =
 	let in_call_args = ctx.in_call_args in
 	ctx.in_call_args <- true;
 	let call_error err p =
@@ -568,6 +568,8 @@ let rec unify_call_args' ctx el args r callp inline force_inline =
 		with Error(l,p) when (match l with Call_error _ | Module_not_found _ -> false | _ -> true) ->
 			raise (WithTypeError (l,p))
 	in
+	let alloc_implicit, done_implicit = Exttyper.Implicit.resolver (fun e -> type_expr ctx e NoValue) type_against (add_local ctx) in
+	let implicit_vars = ref [] in
 	let rec loop el args = match el,args with
 		| [],[] ->
 			begin match List.rev !invalid_skips with
@@ -582,8 +584,19 @@ let rec unify_call_args' ctx el args r callp inline force_inline =
 				| _ ->
 					assert false
 			end
-		| [],(_,false,_) :: _ ->
-			call_error (Not_enough_arguments args) callp
+		| [],(n,false,t) :: args2 ->
+			(try
+				let _,el,_ = Meta.get Meta.ImplicitParam meta in
+				ignore(
+					List.find (fun e -> match fst e with
+					| EConst(Ident s) when s=n-> true
+					| _ -> false
+					) 
+				el);
+				let et = alloc_implicit t ctx.m.module_implicits in
+				(et,false) :: loop [] args2
+			with Not_found -> call_error (Not_enough_arguments args) callp
+			)
 		| [],(name,true,t) :: args ->
 			begin match loop [] args with
 				| [] when not (inline && (ctx.g.doinline || force_inline)) && not ctx.com.config.pf_pad_nulls ->
@@ -613,10 +626,19 @@ let rec unify_call_args' ctx el args r callp inline force_inline =
 	in
 	let el = try loop el args with exc -> ctx.in_call_args <- in_call_args; raise exc; in
 	ctx.in_call_args <- in_call_args;
+	done_implicit (fun blk -> 
+		ctx.wrap_with <- (fun et ->
+			{
+				eexpr = TBlock(blk@[et]);
+				etype = et.etype;
+				epos = null_pos;
+			}
+		) ::ctx.wrap_with
+	);
 	el,TFun(args,r)
 
-let unify_call_args ctx el args r p inline force_inline =
-	let el,tf = unify_call_args' ctx el args r p inline force_inline in
+let unify_call_args ?(meta=[]) ctx el args r p inline force_inline =
+	let el,tf = unify_call_args' ~meta:meta ctx el args r p inline force_inline in
 	List.map fst el,tf
 
 let unify_field_call ctx fa el args ret p inline =
@@ -1777,7 +1799,10 @@ let unify_int ctx e k =
 		unify ctx e.etype ctx.t.tint e.epos;
 		true
 
- let type_generic_function ctx (e,fa) el ?(using_param=None) with_type p =
+ let rec type_generic_function ctx (e,fa) el ?(using_param=None) with_type p =
+ 	let retype el =
+		 type_generic_function ctx (e, fa) el ~using_param:using_param with_type p
+	in
 	let c,tl,cf,stat = match fa with
 		| FInstance(c,tl,cf) -> c,tl,cf,false
 		| FStatic(c,cf) -> c,[],cf,true
@@ -1803,7 +1828,7 @@ let unify_int ctx e k =
 		| WithType t -> unify ctx ret t p
 		| _ -> ()
 	end;
-	let el,_ = unify_call_args ctx el args ret p false false in
+	let el,_ = unify_call_args ~meta:cf.cf_meta ctx el args ret p false false in
 	begin try
 		check_constraints ctx cf.cf_name cf.cf_params monos map false p
 	with Unify_error l ->
@@ -1874,7 +1899,13 @@ let unify_int ctx e k =
 		let e = if stat then type_type ctx path p else e in
 		let fa = if stat then FStatic (c,cf2) else FInstance (c,tl,cf2) in
 		let e = mk (TField(e,fa)) cf2.cf_type p in
-		make_call ctx e el ret p
+		let call = make_call ctx e el ret p in
+		(match ctx.wrap_with with
+		| [] -> call
+		| x::xs ->
+			ctx.wrap_with <- xs;
+			x(call)
+		)
 	with Typeload.Generic_Exception (msg,p) ->
 		error msg p)
 
@@ -2801,6 +2832,10 @@ and type_vars ctx vl p =
 			) in
 			if v.[0] = '$' then display_error ctx "Variables names starting with a dollar are not allowed" p;
 			let v = add_local ctx v t pv in
+			(if Meta.has Meta.Implicit ctx.meta then
+				ctx.m.module_implicits <- (fun () -> EConst(Ident v.v_name),pv ) :: ctx.m.module_implicits;
+				v.v_meta <- (Meta.Implicit,[],pv) :: v.v_meta
+			);
 			v.v_meta <- (Meta.UserVariable,[],pv) :: v.v_meta;
 			if ctx.in_display && Display.is_display_position pv then
 				Display.DisplayEmitter.display_variable ctx.com.display v pv;
@@ -4720,6 +4755,7 @@ let rec create com =
 			module_globals = PMap.empty;
 			wildcard_packages = [];
 			module_imports = [];
+			module_implicits = [];
 		};
 		is_display_file = false;
 		meta = [];
@@ -4743,6 +4779,7 @@ let rec create com =
 		vthis = None;
 		in_call_args = false;
 		on_error = (fun ctx msg p -> ctx.com.error msg p);
+		wrap_with = [];
 	} in
 	ctx.g.std <- (try
 		Typeload.load_module ctx ([],"StdTypes") null_pos

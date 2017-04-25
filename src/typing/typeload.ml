@@ -740,6 +740,7 @@ let hide_params ctx =
 		module_globals = PMap.empty;
 		wildcard_packages = [];
 		module_imports = [];
+		module_implicits = [];
 	};
 	ctx.type_params <- [];
 	(fun() ->
@@ -2956,6 +2957,24 @@ let init_module_type ctx context_init do_init (decl,p) =
 		| _ ->
 			if Display.is_display_file p.pfile then handle_path_display ctx path p
 	in
+	let init_implicit_import mts = 
+		List.iter(fun (mt, p) ->
+			match mt with
+				| TClassDecl c when Meta.has Meta.Implicit c.cl_meta ->
+					ctx.m.module_implicits <- (fun () ->
+						let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
+						ENew ((tp, null_pos), []), null_pos
+					) :: ctx.m.module_implicits
+				| TAbstractDecl a when Meta.has Meta.Implicit a.a_meta ->
+					ctx.m.module_implicits <- (fun () ->
+						let tp = {tpackage=fst a.a_path; tname=snd a.a_path; tparams=[];tsub=None;} in
+						ENew ((tp, null_pos), []), null_pos
+					) :: ctx.m.module_implicits
+				| TEnumDecl _ -> ()
+				| TTypeDecl _ -> ()
+				| _ -> ()
+			) (List.rev mts)
+	in
 	match decl with
 	| EImport (path,mode) ->
 		let extra_imports = ref [] in
@@ -3027,9 +3046,13 @@ let init_module_type ctx context_init do_init (decl,p) =
 					| [] ->
 						(match name with
 						| None ->
-							ctx.m.module_types <- List.filter no_private (List.map (fun t -> t,p) types) @ ctx.m.module_types
+							let mts = List.filter no_private (List.map (fun t -> t,p) types) in
+							init_implicit_import mts;
+							ctx.m.module_types <-  mts @ ctx.m.module_types
 						| Some newname ->
-							ctx.m.module_types <- (rebind (get_type tname) newname,p) :: ctx.m.module_types);
+							let mt = (rebind (get_type tname) newname,p) in
+							init_implicit_import [mt];
+							ctx.m.module_types <- mt :: ctx.m.module_types);
 					| [tsub,p2] ->
 						let pu = punion p1 p2 in
 						(try
@@ -3040,7 +3063,9 @@ let init_module_type ctx context_init do_init (decl,p) =
 								extra_imports := (path@[(tsub, pu)], INormal)::!extra_imports
 							end;
 
-							ctx.m.module_types <- ((match name with None -> tpsub | Some n -> rebind tpsub n),p) :: ctx.m.module_types
+							let mt = ((match name with None -> tpsub | Some n -> rebind tpsub n),p) in
+							init_implicit_import [mt];
+							ctx.m.module_types <- mt :: ctx.m.module_types
 						with Not_found ->
 							(* this might be a static property, wait later to check *)
 							let tmain = get_type tname in
@@ -3176,6 +3201,13 @@ let init_module_type ctx context_init do_init (decl,p) =
 					| Some f -> run_field f
 					| _ -> ()
 			);
+			if Meta.has Meta.Implicit c.cl_meta then
+				ctx.m.module_implicits <-
+					(fun () ->
+						let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
+						ENew ((tp, null_pos), []), null_pos
+					)
+					:: ctx.m.module_implicits;
 	| EEnum d ->
 		let e = (match get_type (fst d.d_name) with TEnumDecl e -> e | _ -> assert false) in
 		if ctx.is_display_file && Display.is_display_position (pos d.d_name) then
@@ -3405,7 +3437,14 @@ let init_module_type ctx context_init do_init (decl,p) =
 				a.a_this <- TAbstract(a,List.map snd a.a_params)
 			else
 				error "Abstract is missing underlying type declaration" a.a_pos
-		end
+		end;
+			if Meta.has Meta.Implicit a.a_meta then
+				ctx.m.module_implicits <-
+					(fun () ->
+						let tp = {tpackage=fst a.a_path; tname=snd a.a_path; tparams=[];tsub=None;} in
+						ENew ((tp, null_pos), []), null_pos
+					)
+					:: ctx.m.module_implicits
 
 let module_pass_2 ctx m decls tdecls p =
 	(* here is an additional PASS 1 phase, which define the type parameters for all module types.
@@ -3459,6 +3498,7 @@ let type_types_into_module ctx m tdecls p =
 			module_globals = PMap.empty;
 			wildcard_packages = [];
 			module_imports = [];
+			module_implicits = [];
 		};
 		is_display_file = (ctx.com.display.dms_display && Display.is_display_file m.m_extra.m_file);
 		meta = [];
@@ -3482,6 +3522,7 @@ let type_types_into_module ctx m tdecls p =
 		opened = [];
 		in_call_args = false;
 		vthis = None;
+		wrap_with = [];
 	} in
 	if ctx.g.std != null_module then begin
 		add_dependency m ctx.g.std;

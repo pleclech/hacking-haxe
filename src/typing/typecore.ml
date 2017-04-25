@@ -63,6 +63,8 @@ type typer_module = {
 	mutable module_globals : (string, (module_type * string * pos)) PMap.t;
 	mutable wildcard_packages : (string list * pos) list;
 	mutable module_imports : import list;
+
+	mutable module_implicits : (unit -> expr) list;
 }
 
 type typer_globals = {
@@ -124,6 +126,7 @@ and typer = {
 	mutable opened : anon_status ref list;
 	mutable vthis : tvar option;
 	mutable in_call_args : bool;
+	mutable wrap_with : (texpr -> texpr) list;
 	(* events *)
 	mutable on_error : typer -> string -> pos -> unit;
 }
@@ -201,9 +204,15 @@ let unify_raise ctx t1 t2 p =
 			(* no untyped check *)
 			raise (Error (Unify l,p))
 
+let depth = ref 0
+
 let save_locals ctx =
+	let implicits = ctx.m.module_implicits in
 	let locals = ctx.locals in
-	(fun() -> ctx.locals <- locals)
+	(fun() -> 
+		ctx.locals <- locals;
+		ctx.m.module_implicits <- implicits;
+	)
 
 let add_local ?(meta=[]) ctx n t p =
 	let v = alloc_var ~meta:meta n t p in
@@ -348,7 +357,7 @@ module AbstractCast = struct
 		in
 		let warned_ref = ref true in
 		let when_found a tl cf eright tleft p =
-			if (Meta.has Meta.MultiType a.a_meta) then
+			if (Meta.has Meta.MultiType a.a_meta) then 
 				mk_cast eright tleft p
 			else match a.a_impl with
 				| Some c -> recurse cf (fun () ->

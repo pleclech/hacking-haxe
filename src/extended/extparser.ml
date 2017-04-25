@@ -165,11 +165,20 @@ module ObjectConstructor = struct
         let l = String.length object_prefix in
         String.sub name l ((String.length name) - l)
 
-    let get_function_meta meta pl p =
-        if pl=[] || not (Flag.is_current_set Flag.obj_decl_flag) then
-            meta
-        else
-            (Meta.Generic, [], p)::meta
+    let get_function_meta meta pl al p =
+        let meta =
+            if pl=[] || not (Flag.is_current_set Flag.obj_decl_flag) then
+                meta
+            else
+                (Meta.Generic, [], p)::meta
+        in
+        List.fold_left (fun acc ((n,_),_,meta,_,_) ->
+		    List.fold_left (fun acc2 (sm,_,mp) ->
+				match sm with
+				| Meta.Implicit -> (Meta.ImplicitParam,[(EConst(Ident n),mp)],mp)::acc2
+				| _ -> acc2
+			) acc meta
+		) meta al
 end
 
 module ExtState = struct

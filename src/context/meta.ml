@@ -75,6 +75,8 @@ type strict_meta =
 	| IfFeature
 	| Impl
 	| PythonImport
+	| Implicit
+	| ImplicitParam
 	| ImplicitCast
 	| ImplicitConversion
 	| Include
@@ -278,6 +280,8 @@ let get_info = function
 	| IfFeature -> ":ifFeature",("Causes a field to be kept by DCE if the given feature is part of the compilation",[HasParam "Feature name";UsedOn TClassField])
 	| Impl -> ":impl",("Used internally to mark abstract implementation fields",[UsedOn TAbstractField; UsedInternally])
 	| PythonImport -> ":pythonImport",("Generates python import statement for extern classes",[Platforms [Python]; UsedOn TClass])
+	| Implicit -> ":implicit", ("Mark an expression as implicitly available for looking for", [UsedOn TClass])
+	| ImplicitParam -> ":implicitParam", ("Mark a function argument to be elligible for implicit resolution", [UsedInternally])	
 	| ImplicitCast -> ":implicitCast",("Generated automatically on the AST when an implicit abstract cast happens",[UsedInternally; UsedOn TExpr])
 	| ImplicitConversion-> ":implicitConversion",("allow deeper implicit conversion from right to left expression. if set to abstract conversion will be done only if one of two type is an Abstract. if set to any will try to pick any conversion that can be done",[UsedOnEither [TClass;TClassField;]])
 	| Include -> ":include",("",[Platform Cpp])

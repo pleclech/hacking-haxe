@@ -1162,7 +1162,7 @@ and parse_class_field s =
 				f_type = t;
 				f_expr = e;
 			} in
-			name, punion p1 p2, FFun f, (ObjectConstructor.get_function_meta meta pl p1), None
+			name, punion p1 p2, FFun f, (ObjectConstructor.get_function_meta meta pl al p1), None
 		| [< '(Kwd Def,p1); name = parse_fun_name; _=Extparser.is_function_allowed (fst name) p1 custom_error; po = Extparser.parse_opt_fun_args; t = parse_type_opt; s >] ->
 			ExtSymbol.enter_new_scope (Some false);
 			let pl, args, name, ooe = match po with
@@ -1213,7 +1213,7 @@ and parse_class_field s =
 			}
 			in
 			let _ = ClassConstructor.insert_exprs ooe in
-			name, punion p1 p2, FFun f, (ObjectConstructor.get_function_meta meta pl p1), None
+			name, punion p1 p2, FFun f, (ObjectConstructor.get_function_meta meta pl args p1), None
 		| [< >] ->
 			let fail() = raise Stream.Failure in
 			if al = [] then
@@ -1445,7 +1445,14 @@ and parse_function p1 inl = parser
 				f_args = al;
 				f_expr = Some (Extparser.add_const_init al e);
 			} in
-			EFunction ((match name with None -> None | Some (name,_) -> Some (if inl then "inline_" ^ name else name)),f), punion p1 (pos e)
+			let fn = EFunction ((match name with None -> None | Some (name,_) -> Some (if inl then "inline_" ^ name else name)),f), punion p1 (pos e) in
+			List.fold_left (fun acc ((n,_),_,meta,_,_) ->
+				List.fold_left (fun acc2 (sm,_,mp) ->
+					match sm with
+					| Meta.Implicit -> EMeta((Meta.ImplicitParam,[(EConst(Ident n),mp)],mp),acc2),mp
+					| _ -> acc2
+				) acc meta
+			) fn al
 		in
 		(try
 			expr_next (make (secure_expr s)) s
