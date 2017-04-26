@@ -569,7 +569,6 @@ let rec unify_call_args' ?(meta=[]) ctx el args r callp inline force_inline =
 			raise (WithTypeError (l,p))
 	in
 	let alloc_implicit, done_implicit = Exttyper.Implicit.resolver (fun e -> type_expr ctx e NoValue) type_against (add_local ctx) in
-	let implicit_vars = ref [] in
 	let rec loop el args = match el,args with
 		| [],[] ->
 			begin match List.rev !invalid_skips with
@@ -586,14 +585,8 @@ let rec unify_call_args' ?(meta=[]) ctx el args r callp inline force_inline =
 			end
 		| [],(n,false,t) :: args2 ->
 			(try
-				let _,el,_ = Meta.get Meta.ImplicitParam meta in
-				ignore(
-					List.find (fun e -> match fst e with
-					| EConst(Ident s) when s=n-> true
-					| _ -> false
-					) 
-				el);
-				let et = alloc_implicit t ctx.m.module_implicits in
+				ignore(Exttyper.Implicit.get_implicit_param n meta);
+				let et = alloc_implicit t ctx.locals ctx.m.module_implicits in
 				(et,false) :: loop [] args2
 			with Not_found -> call_error (Not_enough_arguments args) callp
 			)
@@ -684,7 +677,7 @@ let unify_field_call ctx fa el args ret p inline =
 	let is_overload = Meta.has Meta.Overload cf.cf_meta in
 	let attempt_call t cf = match follow t with
 		| TFun(args,ret) ->
-			let el,tf = unify_call_args' ctx el args ret p inline is_forced_inline in
+			let el,tf = unify_call_args' ~meta:cf.cf_meta ctx el args ret p inline is_forced_inline in
 			let mk_call ethis p_field =
 				let ef = mk (TField(ethis,mk_fa cf)) t p_field in
 				make_call ctx ef (List.map fst el) ret p
@@ -832,6 +825,7 @@ let get_constructor ctx c params p =
 		apply_params c.cl_params params ct, f
 
 let make_call ctx e params t p =
+	let call = 
 	try
 		let ethis,cl,f = match e.eexpr with
 			| TField (ethis,fa) ->
@@ -886,6 +880,13 @@ let make_call ctx e params t p =
 			raise Exit)
 	with Exit ->
 		mk (TCall (e,params)) t p
+	in
+	(match ctx.wrap_with with
+	| [] -> call
+	| x::xs ->
+		ctx.wrap_with <- xs;
+		x(call)
+	)
 
 let mk_array_get_call ctx (cf,tf,r,e1,e2o) c ebase p = match cf.cf_expr with
 	| None ->
@@ -1800,9 +1801,6 @@ let unify_int ctx e k =
 		true
 
  let rec type_generic_function ctx (e,fa) el ?(using_param=None) with_type p =
- 	let retype el =
-		 type_generic_function ctx (e, fa) el ~using_param:using_param with_type p
-	in
 	let c,tl,cf,stat = match fa with
 		| FInstance(c,tl,cf) -> c,tl,cf,false
 		| FStatic(c,cf) -> c,[],cf,true
@@ -1899,13 +1897,7 @@ let unify_int ctx e k =
 		let e = if stat then type_type ctx path p else e in
 		let fa = if stat then FStatic (c,cf2) else FInstance (c,tl,cf2) in
 		let e = mk (TField(e,fa)) cf2.cf_type p in
-		let call = make_call ctx e el ret p in
-		(match ctx.wrap_with with
-		| [] -> call
-		| x::xs ->
-			ctx.wrap_with <- xs;
-			x(call)
-		)
+		make_call ctx e el ret p
 	with Typeload.Generic_Exception (msg,p) ->
 		error msg p)
 
@@ -2832,10 +2824,12 @@ and type_vars ctx vl p =
 			) in
 			if v.[0] = '$' then display_error ctx "Variables names starting with a dollar are not allowed" p;
 			let v = add_local ctx v t pv in
-			(if Meta.has Meta.Implicit ctx.meta then
+
+			if Meta.has Meta.Implicit ctx.meta then begin
 				ctx.m.module_implicits <- (fun () -> EConst(Ident v.v_name),pv ) :: ctx.m.module_implicits;
 				v.v_meta <- (Meta.Implicit,[],pv) :: v.v_meta
-			);
+			end;
+			
 			v.v_meta <- (Meta.UserVariable,[],pv) :: v.v_meta;
 			if ctx.in_display && Display.is_display_position pv then
 				Display.DisplayEmitter.display_variable ctx.com.display v pv;

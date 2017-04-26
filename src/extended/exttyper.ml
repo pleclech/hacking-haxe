@@ -4,8 +4,6 @@ open Meta
 open Type
 open Error
 
-exception WithTypeError of error_msg * pos
-
 let prepare_using_field_ref:(tclass_field -> tclass_field) ref = ref (fun _ -> assert false)
 let set_return_partial_type_ref:(bool -> unit) ref = ref (fun _ -> assert false)
 
@@ -518,6 +516,13 @@ module OneOf = struct
 end
 
 module Implicit = struct
+	let get_implicit_param n meta =
+		List.find (fun m ->
+		match m with
+		| Meta.ImplicitParam,[EConst(Ident s), _],_ when s=n -> true
+		| _ -> false
+		) meta
+
 	let id = ref 0
 	let mk_fresh_var add_local type_against oet =
 		incr id;
@@ -533,16 +538,25 @@ module Implicit = struct
 		in
 		type_against ev, tv
 
-	let search_and_allocate type_expr type_against add_local implicits =
+	let search_and_allocate locals type_expr type_against add_local implicits =
 		let oet = ref None in
 		ignore(List.exists (fun f ->
 			let e = f() in
+			(match e with
+			| EConst(Ident s), _ ->
+				let ov = try Some(PMap.find s locals) with Not_found ->None in
+				(match ov with 
+				| None -> () 
+				| Some(v) -> if not (Meta.has Meta.Implicit v.v_meta) then raise Not_found
+				)
+			| _ -> ()
+			);
 			try
 				let et = type_expr e in
 				type_against e;
 				oet := Some et;
 				true
-			with WithTypeError (ul,p)-> false
+			with _ -> false
 		) implicits);
 		match !oet with
 		| None -> raise Not_found
@@ -550,15 +564,13 @@ module Implicit = struct
 
 	let resolver type_expr type_against add_local =
 		let implicit_vars = ref [] in
-		(fun t implicits ->
-			let et,tv =search_and_allocate type_expr (type_against t) add_local implicits in 
+		(fun t locals implicits ->
+			let et,tv = search_and_allocate locals type_expr (type_against t) add_local implicits in 
 			implicit_vars := tv :: !implicit_vars;
 			et
 		),
 		(fun with_implicit -> match !implicit_vars with
 			| [] -> ()
-			| x::xs ->
-				let blk = List.rev !implicit_vars in
-				with_implicit (List.rev !implicit_vars)
+			| x::xs -> with_implicit (List.rev !implicit_vars)
 		)
 end

@@ -725,6 +725,32 @@ let rec has_mono t = match t with
 	| TLazy r ->
 		has_mono (!r())
 
+let save_monos t =
+	let monos = ref [] in
+	let rec loop t =
+		match t with
+		| TMono r ->
+			(match !r with 
+			| None -> monos := r :: !monos
+			| Some t -> loop t
+			)
+		| TInst(_,pl) | TEnum(_,pl) | TAbstract(_,pl) | TType(_,pl) ->
+			List.iter loop pl
+		| TDynamic _ -> ()
+		| TFun(args,r) ->
+			loop r;
+			List.iter (fun (_,_,t) -> loop t) args
+		| TAnon a ->
+			PMap.iter (fun k cf -> loop cf.cf_type) a.a_fields
+		| TLazy r ->
+			loop (!r())
+	in 
+	ignore(loop t);
+	(fun () ->
+		List.iter (fun r -> r := None) !monos;
+		monos := []
+	)
+
 let concat e1 e2 =
 	let e = (match e1.eexpr, e2.eexpr with
 		| TBlock el1, TBlock el2 -> TBlock (el1@el2)
@@ -2169,6 +2195,7 @@ and unify_to_field ab tl b ?(store_failed=ref []) ?(allow_transitive_cast=true) 
 	if (List.exists (fun (b2,a2) -> fast_eq a a2 && fast_eq b b2) (!abstract_cast_stack)) then false else begin
 	abstract_cast_stack := (b,a) :: !abstract_cast_stack;
 	let unify_func = if allow_transitive_cast then unify else type_eq EqStrict in
+	let a_monos = save_monos a in
 	let r = try
 		begin match follow cf.cf_type with
 			| TFun((_,_,ta) :: _,_) ->
@@ -2189,7 +2216,9 @@ and unify_to_field ab tl b ?(store_failed=ref []) ?(allow_transitive_cast=true) 
 			| _ -> assert false
 		end;
 		true
-	with Unify_error _ -> false
+	with Unify_error _ ->
+		a_monos();
+		false
 	in
 	abstract_cast_stack := List.tl !abstract_cast_stack;
 	r
