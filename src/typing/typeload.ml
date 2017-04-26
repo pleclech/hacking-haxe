@@ -2941,7 +2941,7 @@ let handle_path_display ctx path p =
 
 let add_implicit_expr ctx default_expr p meta =
 	try 
-		let _,el,_ = Meta.get Meta.Implicit ctx.meta in
+		let _,el,_ = Meta.get Meta.Implicit meta in
 		let el = if el=[] then default_expr else el in
 		ctx.m.module_implicits <- (fun () -> (EBlock el, p)) :: ctx.m.module_implicits;
 		el
