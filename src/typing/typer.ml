@@ -630,6 +630,12 @@ let rec unify_call_args' ?(meta=[]) ctx el args r callp inline force_inline =
 	);
 	el,TFun(args,r)
 
+let wrap_call ctx call = match ctx.wrap_with with
+	| [] -> call
+	| x::xs ->
+		ctx.wrap_with <- xs;
+		x(call)
+
 let unify_call_args ?(meta=[]) ctx el args r p inline force_inline =
 	let el,tf = unify_call_args' ~meta:meta ctx el args r p inline force_inline in
 	List.map fst el,tf
@@ -678,9 +684,11 @@ let unify_field_call ctx fa el args ret p inline =
 	let attempt_call t cf = match follow t with
 		| TFun(args,ret) ->
 			let el,tf = unify_call_args' ~meta:cf.cf_meta ctx el args ret p inline is_forced_inline in
+			let ww = ctx.wrap_with in
 			let mk_call ethis p_field =
 				let ef = mk (TField(ethis,mk_fa cf)) t p_field in
-				make_call ctx ef (List.map fst el) ret p
+				ctx.wrap_with <- ww;
+				wrap_call ctx (make_call ctx ef (List.map fst el) ret p)
 			in
 			el,tf,mk_call
 		| _ ->
@@ -825,7 +833,6 @@ let get_constructor ctx c params p =
 		apply_params c.cl_params params ct, f
 
 let make_call ctx e params t p =
-	let call = 
 	try
 		let ethis,cl,f = match e.eexpr with
 			| TField (ethis,fa) ->
@@ -880,13 +887,6 @@ let make_call ctx e params t p =
 			raise Exit)
 	with Exit ->
 		mk (TCall (e,params)) t p
-	in
-	(match ctx.wrap_with with
-	| [] -> call
-	| x::xs ->
-		ctx.wrap_with <- xs;
-		x(call)
-	)
 
 let mk_array_get_call ctx (cf,tf,r,e1,e2o) c ebase p = match cf.cf_expr with
 	| None ->
@@ -1897,7 +1897,7 @@ let unify_int ctx e k =
 		let e = if stat then type_type ctx path p else e in
 		let fa = if stat then FStatic (c,cf2) else FInstance (c,tl,cf2) in
 		let e = mk (TField(e,fa)) cf2.cf_type p in
-		make_call ctx e el ret p
+		wrap_call ctx (make_call ctx e el ret p)
 	with Typeload.Generic_Exception (msg,p) ->
 		error msg p)
 
@@ -3406,6 +3406,7 @@ and type_local_function ctx name f with_type p =
 	(match v with
 	| None -> e
 	| Some v ->
+		v.v_meta <- ctx.meta @ v.v_meta; (* too much ?! *)
 		if params <> [] || inline then v.v_extra <- Some (params,if inline then Some e else None);
 		let rec loop = function
 			| Filters.Block f | Filters.Loop f | Filters.Function f -> f loop
@@ -4493,6 +4494,10 @@ and build_call ctx acc el (with_type:with_type) p =
 							let _,_,mk_call = unify_field_call ctx fa el args r p false in
 							mk_call e1 e.epos
 					end
+				| TLocal v ->
+					let el, tfunc = unify_call_args ~meta:v.v_meta ctx el args r p false false in
+					let r = match tfunc with TFun(_,r) -> r | _ -> assert false in
+					wrap_call ctx (mk (TCall (e,el)) r p)
 				| _ ->
 					let el, tfunc = unify_call_args ctx el args r p false false in
 					let r = match tfunc with TFun(_,r) -> r | _ -> assert false in

@@ -3167,6 +3167,37 @@ let init_module_type ctx context_init do_init (decl,p) =
 					ClassInitializer.init_class ctx c p do_init d.d_flags d.d_data;
 					c.cl_build <- (fun()-> Built);
 					List.iter (fun (_,t) -> ignore(follow t)) c.cl_params;
+	
+					let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
+					ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p c.cl_meta);
+
+					let cl_name = (snd c.cl_path) in
+					let path = (fst c.cl_path)@[cl_name] in
+					let ef = List.fold_left (fun a s -> EField(a, s),p) (EConst(Ident(List.hd path)),p) (List.tl path) in
+					let add ef cf =
+						if Meta.has Meta.Implicit cf.cf_meta then
+						let e = EField(ef, cf.cf_name), p in
+						let e = match cf.cf_kind with
+							| Method _ -> ECall(e, []), p
+							| Var _ -> e
+						in
+						ignore(add_implicit_expr ctx [e] p cf.cf_meta)
+					in
+					List.iter (add ef) c.cl_ordered_statics;
+
+					(if Meta.has Meta.Object c.cl_meta then
+						let ef = 
+							if Meta.has Meta.HasObjectSingleton c.cl_meta then ef
+							else
+								let oname = String.sub cl_name 1 ((String.length cl_name)-1) in
+								match ef with
+									| EField(ef, _), pc -> EField(ef,oname),pc
+									| EConst(Ident _),pc -> EConst(Ident oname),pc
+									| _ -> assert false
+						in
+						List.iter (add ef) c.cl_ordered_fields
+					);
+
 					Built;
 				with Build_canceled state ->
 					c.cl_build <- make_pass ctx build;
@@ -3205,9 +3236,6 @@ let init_module_type ctx context_init do_init (decl,p) =
 					| Some f -> run_field f
 					| _ -> ()
 			);
-
-			let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
-			ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p c.cl_meta)
 	| EEnum d ->
 		let e = (match get_type (fst d.d_name) with TEnumDecl e -> e | _ -> assert false) in
 		if ctx.is_display_file && Display.is_display_position (pos d.d_name) then
