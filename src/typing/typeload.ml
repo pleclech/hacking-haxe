@@ -2939,6 +2939,14 @@ let handle_path_display ctx path p =
 		| (IDK,_),_ ->
 			()
 
+let add_implicit_expr ctx default_expr p meta =
+	try 
+		let _,el,_ = Meta.get Meta.Implicit ctx.meta in
+		let el = if el=[] then default_expr else el in
+		ctx.m.module_implicits <- (fun () -> (EBlock el, p)) :: ctx.m.module_implicits;
+		el
+	with Not_found -> []
+
 (*
 	In this pass, we can access load and access other modules types, but we cannot follow them or access their structure
 	since they have not been setup. We also build a context_init list that will be evaluated the first time we evaluate
@@ -2961,15 +2969,11 @@ let init_module_type ctx context_init do_init (decl,p) =
 		List.iter(fun (mt, p) ->
 			match mt with
 				| TClassDecl c when Meta.has Meta.Implicit c.cl_meta ->
-					ctx.m.module_implicits <- (fun () ->
-						let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
-						ENew ((tp, null_pos), []), null_pos
-					) :: ctx.m.module_implicits
+					let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
+					ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p c.cl_meta)
 				| TAbstractDecl a when Meta.has Meta.Implicit a.a_meta ->
-					ctx.m.module_implicits <- (fun () ->
-						let tp = {tpackage=fst a.a_path; tname=snd a.a_path; tparams=[];tsub=None;} in
-						ENew ((tp, null_pos), []), null_pos
-					) :: ctx.m.module_implicits
+					let tp = {tpackage=fst a.a_path; tname=snd a.a_path; tparams=[];tsub=None;} in
+					ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p a.a_meta)
 				| TEnumDecl _ -> ()
 				| TTypeDecl _ -> ()
 				| _ -> ()
@@ -3201,13 +3205,9 @@ let init_module_type ctx context_init do_init (decl,p) =
 					| Some f -> run_field f
 					| _ -> ()
 			);
-			if Meta.has Meta.Implicit c.cl_meta then
-				ctx.m.module_implicits <-
-					(fun () ->
-						let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
-						ENew ((tp, null_pos), []), null_pos
-					)
-					:: ctx.m.module_implicits;
+
+			let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
+			ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p c.cl_meta)
 	| EEnum d ->
 		let e = (match get_type (fst d.d_name) with TEnumDecl e -> e | _ -> assert false) in
 		if ctx.is_display_file && Display.is_display_position (pos d.d_name) then
@@ -3438,13 +3438,8 @@ let init_module_type ctx context_init do_init (decl,p) =
 			else
 				error "Abstract is missing underlying type declaration" a.a_pos
 		end;
-			if Meta.has Meta.Implicit a.a_meta then
-				ctx.m.module_implicits <-
-					(fun () ->
-						let tp = {tpackage=fst a.a_path; tname=snd a.a_path; tparams=[];tsub=None;} in
-						ENew ((tp, null_pos), []), null_pos
-					)
-					:: ctx.m.module_implicits
+		let tp = {tpackage=fst a.a_path; tname=snd a.a_path; tparams=[];tsub=None;} in
+		ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p a.a_meta)
 
 let module_pass_2 ctx m decls tdecls p =
 	(* here is an additional PASS 1 phase, which define the type parameters for all module types.

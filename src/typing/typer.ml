@@ -2811,6 +2811,14 @@ and type_access ctx e p mode =
 	| _ ->
 		AKExpr (type_expr ctx (e,p) Value)
 
+and add_implicit_expr ctx default_expr p meta =
+	try 
+		let _,el,_ = Meta.get Meta.Implicit ctx.meta in
+		let el = if el=[] then default_expr else el in
+		ctx.m.module_implicits <- (fun () -> (EBlock el, p)) :: ctx.m.module_implicits;
+		el
+	with Not_found -> []
+
 and type_vars ctx vl p =
 	let vl = List.map (fun ((v,pv),t,e) ->
 		try
@@ -2825,11 +2833,11 @@ and type_vars ctx vl p =
 			if v.[0] = '$' then display_error ctx "Variables names starting with a dollar are not allowed" p;
 			let v = add_local ctx v t pv in
 
-			if Meta.has Meta.Implicit ctx.meta then begin
-				ctx.m.module_implicits <- (fun () -> EConst(Ident v.v_name),pv ) :: ctx.m.module_implicits;
-				v.v_meta <- (Meta.Implicit,[],pv) :: v.v_meta
-			end;
-			
+			(match add_implicit_expr ctx [EConst(Ident v.v_name), pv] pv ctx.meta with
+			| [] -> ()
+			| _ as el -> v.v_meta <- (Meta.Implicit, el, pv) :: v.v_meta
+			);
+
 			v.v_meta <- (Meta.UserVariable,[],pv) :: v.v_meta;
 			if ctx.in_display && Display.is_display_position pv then
 				Display.DisplayEmitter.display_variable ctx.com.display v pv;
@@ -3477,21 +3485,26 @@ and type_expr ctx (e,p) (with_type:with_type) =
 		acc_get ctx e p
 	| EField _
 	| EArray _ ->
+		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
 		acc_get ctx (type_access ctx e p MGet) p
 	| EConst (Regexp (r,opt)) ->
+		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
 		let str = mk (TConst (TString r)) ctx.t.tstring p in
 		let opt = mk (TConst (TString opt)) ctx.t.tstring p in
 		let t = Typeload.load_core_type ctx "EReg" in
 		mk (TNew ((match t with TInst (c,[]) -> c | _ -> assert false),[],[str;opt])) t p
 	| EConst (String s) when s <> "" && Lexer.is_fmt_string p ->
+		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
 		type_expr ctx (format_string ctx s p) with_type
 	| EConst c ->
+		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
 		Codegen.type_constant ctx.com c p
 	| EBinop (op,e1,e2) ->
 		type_binop ctx op e1 e2 false with_type p
 	| EBlock [] when with_type <> NoValue ->
 		type_expr ctx (EObjectDecl [],p) with_type
 	| EBlock l ->
+		ignore(add_implicit_expr ctx l p ctx.meta);
 		let ic = Refs.get_implicit_conversion() in
 		Refs.set_implicit_conversion_from_metas ctx.meta;
 		let locals = save_locals ctx in
@@ -3499,10 +3512,12 @@ and type_expr ctx (e,p) (with_type:with_type) =
 		locals();
 		Refs.set_implicit_conversion ic;
 		e
-	| EParenthesis e ->
-		let e = type_expr ctx e with_type in
+	| EParenthesis ep ->
+		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
+		let e = type_expr ctx ep with_type in
 		mk (TParenthesis e) e.etype p
 	| EObjectDecl fl ->
+		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
 		type_object_decl ctx fl with_type p
 	| EArrayDecl [(EFor _,_) | (EWhile _,_) as e] ->
 		let v = gen_local ctx (mk_mono()) p in
