@@ -524,7 +524,7 @@ module Implicit = struct
 		) meta
 
 	let id = ref 0
-	let mk_fresh_var add_local type_against oet =
+	let mk_fresh_var add_local type_against t oet =
 		incr id;
 		let vn = Printf.sprintf "_iv_%d" !id in
 		let tv = add_local vn oet.etype null_pos in
@@ -536,36 +536,58 @@ module Implicit = struct
 			epos=null_pos;
 		} 
 		in
-		type_against ev, tv
+		type_against t ev, tv
 
-	let search_and_allocate locals type_expr type_against add_local implicits =
+	let search_and_allocate locals cast_or_unify_raise type_expr type_against t add_local implicits =
 		let oet = ref None in
+		let targs, args, ret =  match t with
+			| TFun (args, r) -> 
+				args, List.map (fun (s,o,t) -> EConst(Ident "null"),null_pos ) args, Some r
+			| _ -> [], [], None
+		in
 		ignore(List.exists (fun f ->
-			let e = f() in
-			(match e with
-			| EConst(Ident s), _ ->
-				let ov = try Some(PMap.find s locals) with Not_found ->None in
-				(match ov with 
-				| None -> () 
-				| Some(v) -> if not (Meta.has Meta.Implicit v.v_meta) then raise Not_found
-				)
-			| _ -> ()
-			);
 			try
+				let e = f(args) in
+				(match e with
+				| EConst(Ident s), _ ->
+					let ov = try Some(PMap.find s locals) with Not_found ->None in
+					(match ov with 
+					| None -> () 
+					| Some v -> if not (Meta.has Meta.Implicit v.v_meta) then raise Not_found
+					)
+				| _ -> ()
+				);
+				let unify_call et = match et.eexpr with
+					| TCall(er, cargs) ->
+						List.iter2(fun (_,_,t) et -> ignore(cast_or_unify_raise t et et.epos)) targs cargs;
+						er
+					| _ -> raise Not_found
+				in		
 				let et = type_expr e in
-				type_against e;
-				oet := Some et;
+				(match ret with
+				| None -> 
+					type_against t e;
+					oet := Some et
+				| Some t ->
+					ignore(cast_or_unify_raise t et et.epos);
+					(match et.eexpr with
+					| TBlock(x::xs) ->
+						let x = unify_call x in
+						oet := Some({eexpr=TBlock(x::xs);etype=x.etype;epos=et.epos})
+					| _ -> oet := Some(unify_call et)
+					)
+				);
 				true
 			with _ -> false
 		) implicits);
 		match !oet with
 		| None -> raise Not_found
-		| Some et -> mk_fresh_var add_local type_against et
+		| Some et -> mk_fresh_var add_local type_against t et
 
-	let resolver type_expr type_against add_local =
+	let resolver cast_or_unify_raise type_expr type_against add_local =
 		let implicit_vars = ref [] in
 		(fun t locals implicits ->
-			let et,tv = search_and_allocate locals type_expr (type_against t) add_local implicits in 
+			let et,tv = search_and_allocate locals cast_or_unify_raise type_expr type_against t add_local implicits in 
 			implicit_vars := tv :: !implicit_vars;
 			et
 		),

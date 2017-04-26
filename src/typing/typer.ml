@@ -561,14 +561,15 @@ let rec unify_call_args' ?(meta=[]) ctx el args r callp inline force_inline =
 		default_value name t
 	in
 	(* let force_inline, is_extern = match cf with Some(TInst(c,_),f) -> is_forced_inline (Some c) f, c.cl_extern | _ -> false, false in *)
+	let cast_or_unify_raise = AbstractCast.cast_or_unify_raise ctx in
 	let type_against t e =
 		try
 			let e = type_expr ctx e (WithType t) in
-			AbstractCast.cast_or_unify_raise ctx t e e.epos
+			cast_or_unify_raise t e e.epos
 		with Error(l,p) when (match l with Call_error _ | Module_not_found _ -> false | _ -> true) ->
 			raise (WithTypeError (l,p))
 	in
-	let alloc_implicit, done_implicit = Exttyper.Implicit.resolver (fun e -> type_expr ctx e NoValue) type_against (add_local ctx) in
+	let alloc_implicit, done_implicit = Exttyper.Implicit.resolver (cast_or_unify_raise) (fun e -> type_expr ctx e NoValue) (type_against) (add_local ctx) in
 	let rec loop el args = match el,args with
 		| [],[] ->
 			begin match List.rev !invalid_skips with
@@ -2814,10 +2815,10 @@ and type_access ctx e p mode =
 and add_implicit_expr ctx default_expr p meta =
 	try 
 		let _,el,_ = Meta.get Meta.Implicit meta in
-		let el = if el=[] then default_expr else el in
-		ctx.m.module_implicits <- (fun () -> (EBlock el, p)) :: ctx.m.module_implicits;
-		el
-	with Not_found -> []
+		let fn = if el=[] then (fun args -> default_expr args) else (fun args -> EBlock(el),p) in
+		ctx.m.module_implicits <- fn :: ctx.m.module_implicits;
+		Some fn
+	with Not_found -> None
 
 and type_vars ctx vl p =
 	let vl = List.map (fun ((v,pv),t,e) ->
@@ -2833,9 +2834,9 @@ and type_vars ctx vl p =
 			if v.[0] = '$' then display_error ctx "Variables names starting with a dollar are not allowed" p;
 			let v = add_local ctx v t pv in
 
-			(match add_implicit_expr ctx [EConst(Ident v.v_name), pv] pv ctx.meta with
-			| [] -> ()
-			| _ as el -> v.v_meta <- (Meta.Implicit, el, pv) :: v.v_meta
+			(match add_implicit_expr ctx (fun args -> EConst(Ident v.v_name), pv) pv ctx.meta with
+			| None -> ()
+			| Some el -> v.v_meta <- (Meta.Implicit, [], pv) :: v.v_meta
 			);
 
 			v.v_meta <- (Meta.UserVariable,[],pv) :: v.v_meta;
@@ -3486,26 +3487,26 @@ and type_expr ctx (e,p) (with_type:with_type) =
 		acc_get ctx e p
 	| EField _
 	| EArray _ ->
-		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
+		ignore(add_implicit_expr ctx (fun args -> e,p) p ctx.meta);
 		acc_get ctx (type_access ctx e p MGet) p
 	| EConst (Regexp (r,opt)) ->
-		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
+		ignore(add_implicit_expr ctx (fun args -> e,p) p ctx.meta);
 		let str = mk (TConst (TString r)) ctx.t.tstring p in
 		let opt = mk (TConst (TString opt)) ctx.t.tstring p in
 		let t = Typeload.load_core_type ctx "EReg" in
 		mk (TNew ((match t with TInst (c,[]) -> c | _ -> assert false),[],[str;opt])) t p
 	| EConst (String s) when s <> "" && Lexer.is_fmt_string p ->
-		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
+		ignore(add_implicit_expr ctx (fun args -> e,p) p ctx.meta);
 		type_expr ctx (format_string ctx s p) with_type
 	| EConst c ->
-		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
+		ignore(add_implicit_expr ctx (fun args -> e,p) p ctx.meta);
 		Codegen.type_constant ctx.com c p
 	| EBinop (op,e1,e2) ->
 		type_binop ctx op e1 e2 false with_type p
 	| EBlock [] when with_type <> NoValue ->
 		type_expr ctx (EObjectDecl [],p) with_type
 	| EBlock l ->
-		ignore(add_implicit_expr ctx l p ctx.meta);
+		ignore(add_implicit_expr ctx (fun args -> e,p) p ctx.meta);
 		let ic = Refs.get_implicit_conversion() in
 		Refs.set_implicit_conversion_from_metas ctx.meta;
 		let locals = save_locals ctx in
@@ -3514,11 +3515,11 @@ and type_expr ctx (e,p) (with_type:with_type) =
 		Refs.set_implicit_conversion ic;
 		e
 	| EParenthesis ep ->
-		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
+		ignore(add_implicit_expr ctx (fun args -> e,p) p ctx.meta);
 		let e = type_expr ctx ep with_type in
 		mk (TParenthesis e) e.etype p
 	| EObjectDecl fl ->
-		ignore(add_implicit_expr ctx [e,p] p ctx.meta);
+		ignore(add_implicit_expr ctx (fun args -> e,p) p ctx.meta);
 		type_object_decl ctx fl with_type p
 	| EArrayDecl [(EFor _,_) | (EWhile _,_) as e] ->
 		let v = gen_local ctx (mk_mono()) p in

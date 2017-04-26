@@ -2942,10 +2942,10 @@ let handle_path_display ctx path p =
 let add_implicit_expr ctx default_expr p meta =
 	try 
 		let _,el,_ = Meta.get Meta.Implicit meta in
-		let el = if el=[] then default_expr else el in
-		ctx.m.module_implicits <- (fun () -> (EBlock el, p)) :: ctx.m.module_implicits;
-		el
-	with Not_found -> []
+		let fn = if el=[] then (fun args -> default_expr args) else (fun args -> EBlock(el),p) in
+		ctx.m.module_implicits <- fn :: ctx.m.module_implicits;
+		Some fn
+	with Not_found -> None
 
 (*
 	In this pass, we can access load and access other modules types, but we cannot follow them or access their structure
@@ -2970,10 +2970,10 @@ let init_module_type ctx context_init do_init (decl,p) =
 			match mt with
 				| TClassDecl c when Meta.has Meta.Implicit c.cl_meta ->
 					let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
-					ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p c.cl_meta)
+					ignore(add_implicit_expr ctx (fun arg -> ENew ((tp, p), []), p) p c.cl_meta)
 				| TAbstractDecl a when Meta.has Meta.Implicit a.a_meta ->
 					let tp = {tpackage=fst a.a_path; tname=snd a.a_path; tparams=[];tsub=None;} in
-					ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p a.a_meta)
+					ignore(add_implicit_expr ctx (fun arg -> ENew ((tp, p), []), p) p a.a_meta)
 				| TEnumDecl _ -> ()
 				| TTypeDecl _ -> ()
 				| _ -> ()
@@ -3168,35 +3168,44 @@ let init_module_type ctx context_init do_init (decl,p) =
 					c.cl_build <- (fun()-> Built);
 					List.iter (fun (_,t) -> ignore(follow t)) c.cl_params;
 	
-					let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
-					ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p c.cl_meta);
-
-					let cl_name = (snd c.cl_path) in
-					let path = (fst c.cl_path)@[cl_name] in
-					let ef = List.fold_left (fun a s -> EField(a, s),p) (EConst(Ident(List.hd path)),p) (List.tl path) in
 					let add ef cf =
 						if Meta.has Meta.Implicit cf.cf_meta then
 						let e = EField(ef, cf.cf_name), p in
-						let e = match cf.cf_kind with
-							| Method _ -> ECall(e, []), p
-							| Var _ -> e
+						let fn = match cf.cf_kind with
+							| Method _ -> fun args -> ECall(e, args), p
+							| Var _ -> fun args -> e
 						in
-						ignore(add_implicit_expr ctx [e] p cf.cf_meta)
+						ignore(add_implicit_expr ctx fn p cf.cf_meta)
 					in
-					List.iter (add ef) c.cl_ordered_statics;
 
-					(if Meta.has Meta.Object c.cl_meta then
-						let ef = 
-							if Meta.has Meta.HasObjectSingleton c.cl_meta then ef
-							else
-								let oname = String.sub cl_name 1 ((String.length cl_name)-1) in
-								match ef with
-									| EField(ef, _), pc -> EField(ef,oname),pc
-									| EConst(Ident _),pc -> EConst(Ident oname),pc
-									| _ -> assert false
-						in
-						List.iter (add ef) c.cl_ordered_fields
-					);
+					let is_object = Meta.has Meta.Object c.cl_meta in
+					let is_singleton =  Meta.has Meta.HasObjectSingleton c.cl_meta in
+					let is_both = is_object && is_singleton in 
+
+					let cl_name = (snd c.cl_path) in
+
+					let path, fields, fn =
+						if is_both then
+							(fst c.cl_path)@[cl_name], c.cl_ordered_fields, fun args -> (EConst(Ident cl_name),p)
+						else
+							let name, fields, fn = 
+								if is_object then begin
+									if c.cl_ordered_statics<>[] then error (Printf.sprintf "Class %s with companion @:object can't have static fields" cl_name) p;
+									let oname = String.sub cl_name 1 ((String.length cl_name)-1) in
+									oname, c.cl_ordered_fields, fun args -> (EConst(Ident oname),p)
+								end else if is_singleton then
+									let tp = {tpackage=fst c.cl_path; tname=cl_name; tparams=[];tsub=None;} in
+									cl_name, [], fun args -> (ENew ((tp, p), []), p)
+								else
+									let tp = {tpackage=fst c.cl_path; tname=snd c.cl_path; tparams=[];tsub=None;} in
+									cl_name, c.cl_ordered_statics, fun args -> (ENew ((tp, p), []), p)
+							in
+							(fst c.cl_path)@[name], fields, fn
+					in
+					ignore(add_implicit_expr ctx fn p c.cl_meta);
+
+					let ef = List.fold_left (fun a s -> EField(a, s),p) (EConst(Ident(List.hd path)),p) (List.tl path) in
+					List.iter (add ef) fields;
 
 					Built;
 				with Build_canceled state ->
@@ -3467,7 +3476,7 @@ let init_module_type ctx context_init do_init (decl,p) =
 				error "Abstract is missing underlying type declaration" a.a_pos
 		end;
 		let tp = {tpackage=fst a.a_path; tname=snd a.a_path; tparams=[];tsub=None;} in
-		ignore(add_implicit_expr ctx [ENew ((tp, p), []), p] p a.a_meta)
+		ignore(add_implicit_expr ctx (fun args -> ENew ((tp, p), []), p) p a.a_meta)
 
 let module_pass_2 ctx m decls tdecls p =
 	(* here is an additional PASS 1 phase, which define the type parameters for all module types.

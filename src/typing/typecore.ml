@@ -64,7 +64,7 @@ type typer_module = {
 	mutable wildcard_packages : (string list * pos) list;
 	mutable module_imports : import list;
 
-	mutable module_implicits : (unit -> expr) list;
+	mutable module_implicits : (expr list -> expr) list;
 }
 
 type typer_globals = {
