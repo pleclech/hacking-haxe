@@ -3194,7 +3194,7 @@ and type_new ctx path el with_type p =
 		make_call ctx e el t p
 	| TInst (c,params) | TAbstract({a_impl = Some c},params) ->
 		let el,_,_ = build_constructor_call c params in
-		mk (TNew (c,params,el)) t p
+		wrap_call ctx (mk (TNew (c,params,el)) t p)
 	| _ ->
 		error (s_type (print_context()) t ^ " cannot be constructed") p
 	end with Error(No_constructor _ as err,p) when ctx.com.display.dms_display ->

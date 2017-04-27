@@ -45,7 +45,7 @@ let mk_type pack name params sub =
 let mk_type_inf ?(p=null_pos) pack =
 	mk_type pack "Dynamic" ([TPType(CTPath {tpackage=[];tname="?";tparams=[];tsub=None;}, p)]) None
 
-let type_or_infer ot = if ot=None then Some((CTPath (mk_type_inf []), null_pos)) else ot
+let type_or_infer ?(p=null_pos) ot = if ot=None then Some((CTPath (mk_type_inf ~p:p []), p)) else ot
 
 let get_filename n =
 	match List.rev (ExtString.String.nsplit n ".") with

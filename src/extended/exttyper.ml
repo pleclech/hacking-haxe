@@ -516,6 +516,8 @@ module OneOf = struct
 end
 
 module Implicit = struct
+	exception Found of texpr * texpr
+	
 	let get_implicit_param n meta =
 		List.find (fun m ->
 		match m with
@@ -524,65 +526,56 @@ module Implicit = struct
 		) meta
 
 	let id = ref 0
-	let mk_fresh_var add_local type_against t oet =
+	let mk_fresh_var add_local type_against t et =
 		incr id;
 		let vn = Printf.sprintf "_iv_%d" !id in
-		let tv = add_local vn oet.etype null_pos in
-		let ev = (EConst(Ident vn), null_pos) in
-		let tv =
-		{
-			eexpr=TVar(tv, Some oet);
-			etype=oet.etype;
-			epos=null_pos;
-		} 
-		in
-		type_against t ev, tv
+		let p = et.epos in
+		let tv = add_local vn et.etype p in
+		let ev = (EConst(Ident vn), p) in
+		let ev = type_against t ev in
+		let tv = { eexpr=TVar(tv, Some et); etype=et.etype; epos=p; } in
+		ev, tv
+
+	let extract_call ((e,p) as ep) = match e with
+		| ECall(e, _) -> e
+		| _ -> ep
+
+	let update_call ((e,p) as ep) = match e with
+		| EBlock(e::es) -> EBlock((extract_call e)::es),p
+		| _ -> extract_call ep
 
 	let search_and_allocate locals cast_or_unify_raise type_expr type_against t add_local implicits =
-		let oet = ref None in
-		let targs, args, ret =  match t with
-			| TFun (args, r) -> 
-				args, List.map (fun (s,o,t) -> EConst(Ident "null"),null_pos ) args, Some r
-			| _ -> [], [], None
+		let unify =  match t with
+			| TFun (args, r) ->
+				let eargs = List.map (fun (s,o,t) -> EConst(Ident "null"),null_pos ) args in
+				let unify fe =
+					let e = update_call (fe eargs) in
+					let x,y = mk_fresh_var add_local type_against t (type_expr e) in
+					raise (Found(x,y))
+				in
+				unify
+			| _ -> 
+				let unify fe =
+					let e = fe [] in
+					(match e with 
+					| EConst(Ident s), _ ->
+						let ov = try Some(PMap.find s locals) with Not_found ->None in
+						(match ov with 
+						| None -> () 
+						| Some v -> if not (Meta.has Meta.Implicit v.v_meta) then raise Not_found
+						)
+					| _ -> ()
+					);
+					let x,y = mk_fresh_var add_local type_against t (type_expr e) in
+					raise (Found(x,y))
+				in
+				unify
 		in
-		ignore(List.exists (fun f ->
-			try
-				let e = f(args) in
-				(match e with
-				| EConst(Ident s), _ ->
-					let ov = try Some(PMap.find s locals) with Not_found ->None in
-					(match ov with 
-					| None -> () 
-					| Some v -> if not (Meta.has Meta.Implicit v.v_meta) then raise Not_found
-					)
-				| _ -> ()
-				);
-				let unify_call et = match et.eexpr with
-					| TCall(er, cargs) ->
-						List.iter2(fun (_,_,t) et -> ignore(cast_or_unify_raise t et et.epos)) targs cargs;
-						er
-					| _ -> raise Not_found
-				in		
-				let et = type_expr e in
-				(match ret with
-				| None -> 
-					type_against t e;
-					oet := Some et
-				| Some t ->
-					ignore(cast_or_unify_raise t et et.epos);
-					(match et.eexpr with
-					| TBlock(x::xs) ->
-						let x = unify_call x in
-						oet := Some({eexpr=TBlock(x::xs);etype=x.etype;epos=et.epos})
-					| _ -> oet := Some(unify_call et)
-					)
-				);
-				true
-			with _ -> false
-		) implicits);
-		match !oet with
-		| None -> raise Not_found
-		| Some et -> mk_fresh_var add_local type_against t et
+		let unify f = try unify f with Found _ as f -> raise f | _ -> () in 
+		try
+			List.iter (unify) implicits;
+			raise Not_found
+		with Found (x,y) -> x,y
 
 	let resolver cast_or_unify_raise type_expr type_against add_local =
 		let implicit_vars = ref [] in

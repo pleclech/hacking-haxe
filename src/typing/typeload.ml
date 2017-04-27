@@ -3172,7 +3172,26 @@ let init_module_type ctx context_init do_init (decl,p) =
 						if Meta.has Meta.Implicit cf.cf_meta then
 						let e = EField(ef, cf.cf_name), p in
 						let fn = match cf.cf_kind with
-							| Method _ -> fun args -> ECall(e, args), p
+							| Method _ ->
+								let dargs = match follow cf.cf_type with
+									| TFun(el,_) ->
+										let dargs = ref [] in
+										ignore(List.exists (fun (s,o,t) ->
+											try 
+												ignore(Exttyper.Implicit.get_implicit_param s cf.cf_meta);
+												true
+											with Not_found ->
+												let null = EConst(Ident "null"),p in
+												let inf = Extparser.type_or_infer ~p:p None in
+												dargs := (ECast(null, inf),p) :: !dargs;
+												false
+										) el);
+										!dargs
+									| _ -> []
+								in
+								fun args ->
+									let args = if args=[] then dargs else args in
+									ECall(e, args), p
 							| Var _ -> fun args -> e
 						in
 						ignore(add_implicit_expr ctx fn p cf.cf_meta)
@@ -3205,7 +3224,7 @@ let init_module_type ctx context_init do_init (decl,p) =
 					ignore(add_implicit_expr ctx fn p c.cl_meta);
 
 					let ef = List.fold_left (fun a s -> EField(a, s),p) (EConst(Ident(List.hd path)),p) (List.tl path) in
-					List.iter (add ef) fields;
+					List.iter (add ef) (List.rev fields);
 
 					Built;
 				with Build_canceled state ->
