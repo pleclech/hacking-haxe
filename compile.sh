@@ -1,4 +1,8 @@
 #!/bin/sh
+if [ ! -f "_build/src/extended/extparser.ml" -o "src/extended/extparser.mly" -nt "_build/src/extended/extparser.ml" ]; then
+	camlp4o -impl src/extended/extparser.mly -o _build/src/extended/extparser.ml
+fi
+
 if [ ! -f "_build/src/syntax/parser.ml" -o "src/syntax/parser.mly" -nt "_build/src/syntax/parser.ml" ]; then
 	camlp4o -impl src/syntax/parser.mly -o _build/src/syntax/parser.ml
 fi
