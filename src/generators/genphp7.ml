@@ -1375,6 +1375,7 @@ class code_writer (ctx:Common.context) hx_type_path php_name =
 						| ([],"Void") -> "void"
 						| ([],"Enum") -> "Enum"
 						| ([], "Class") -> "Class"
+						| _ when Meta.has Meta.AllowUnderlyingType abstr.a_meta -> self#use_t abstr.a_this
 						| _ when Meta.has Meta.CoreType abstr.a_meta -> "mixed"
 						| _ -> self#use_t abstr.a_this
 		(**

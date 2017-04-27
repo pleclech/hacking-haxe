@@ -63,6 +63,8 @@ type typer_module = {
 	mutable module_globals : (string, (module_type * string * pos)) PMap.t;
 	mutable wildcard_packages : (string list * pos) list;
 	mutable module_imports : import list;
+
+	mutable module_implicits : (expr list -> expr) list;
 }
 
 type typer_globals = {
@@ -124,6 +126,7 @@ and typer = {
 	mutable opened : anon_status ref list;
 	mutable vthis : tvar option;
 	mutable in_call_args : bool;
+	mutable wrap_with : (texpr -> texpr) list;
 	(* events *)
 	mutable on_error : typer -> string -> pos -> unit;
 }
@@ -201,17 +204,23 @@ let unify_raise ctx t1 t2 p =
 			(* no untyped check *)
 			raise (Error (Unify l,p))
 
-let save_locals ctx =
-	let locals = ctx.locals in
-	(fun() -> ctx.locals <- locals)
+let depth = ref 0
 
-let add_local ctx n t p =
-	let v = alloc_var n t p in
+let save_locals ctx =
+	let implicits = ctx.m.module_implicits in
+	let locals = ctx.locals in
+	(fun() -> 
+		ctx.locals <- locals;
+		ctx.m.module_implicits <- implicits;
+	)
+
+let add_local ?(meta=[]) ctx n t p =
+	let v = alloc_var ~meta:meta n t p in
 	ctx.locals <- PMap.add n v ctx.locals;
 	v
 
-let add_unbound_local ctx n t p =
-	let v = add_local ctx n t p in
+let add_unbound_local ?(meta=[]) ctx n t p =
+	let v = add_local ~meta:meta ctx n t p in
 	v.v_meta <- (Meta.Unbound,[],null_pos) :: v.v_meta;
 	v
 
@@ -294,7 +303,7 @@ let create_fake_module ctx file =
 			m_extra = module_extra file (Common.get_signature ctx.com) (file_time file) MFake [];
 		} in
 		Hashtbl.add fake_modules file mdep;
-		mdep
+		Exttyper.AbstractGraph.register_module mdep
 	) in
 	Hashtbl.replace ctx.g.modules mdep.m_path mdep;
 	mdep
@@ -346,50 +355,76 @@ module AbstractCast = struct
 			cast_stack := List.tl !cast_stack;
 			r
 		in
-		let find a tl f =
-			let tcf,cf = f() in
-			if (Meta.has Meta.MultiType a.a_meta) then
+		let warned_ref = ref true in
+		let when_found a tl cf eright tleft p =
+			if (Meta.has Meta.MultiType a.a_meta) then 
 				mk_cast eright tleft p
 			else match a.a_impl with
 				| Some c -> recurse cf (fun () ->
+					if (!warned_ref) && Common.defined ctx.com Common.Define.WarnOnImplicitConversion then begin
+						warned_ref := false;
+						(!Refs.warning_ref) (Printf.sprintf "Implicit conversion for %s to %s" (Refs.expr_to_s eright) (s_type_kind tleft)) p
+					end;
 					let ret = make_static_call ctx c cf a tl [eright] tleft p in
 					{ ret with eexpr = TMeta( (Meta.ImplicitCast,[],ret.epos), ret) }
 				)
 				| None -> assert false
 		in
+		let find a tl f =
+			let tcf,cf = f() in
+			when_found a tl cf eright tleft p
+		in
 		if type_iseq tleft eright.etype then
 			eright
 		else begin
+			let is_ta = Refs.is_transitive_abstract() in
 			let rec loop tleft tright = match follow tleft,follow tright with
-			| TAbstract(a1,tl1),TAbstract(a2,tl2) ->
-				begin try find a2 tl2 (fun () -> Abstract.find_to a2 tl2 tleft)
-				with Not_found -> try find a1 tl1 (fun () -> Abstract.find_from a1 tl1 eright.etype tleft)
-				with Not_found -> raise Not_found
-				end
-			| TAbstract(a,tl),_ ->
+			| TAbstract(a1,tl1) as ftleft, TAbstract(a2,tl2) ->
+					let legacy = ref false in
+					begin try find a2 tl2 (fun () -> Abstract.find_to ~legacy:legacy a2 tl2 tleft)
+					with Not_found -> try find a1 tl1 (fun () -> Abstract.find_from ~legacy:legacy a1 tl1 eright.etype tleft)
+					with Not_found -> 
+						if is_ta && not !legacy then
+							Exttyper.Transitive.make_cast_with_module ctx.m.curmod cast_stack when_found ftleft eright p
+						else
+							raise Not_found
+					end
+			| TAbstract(a,tl) as ftleft,_ ->
 				begin try find a tl (fun () -> Abstract.find_from a tl eright.etype tleft)
 				with Not_found ->
 					let rec loop2 tcl = match tcl with
 						| tc :: tcl ->
 							if not (type_iseq tc tleft) then loop (apply_params a.a_params tl tc) tright
 							else loop2 tcl
-						| [] -> raise Not_found
+						| [] ->
+							if is_ta then
+								Exttyper.Transitive.make_cast_with_module ctx.m.curmod cast_stack when_found ftleft eright p
+							else
+								raise Not_found
 					in
 					loop2 a.a_from
 				end
-			| _,TAbstract(a,tl) ->
+			| _ as ftleft, TAbstract(a,tl) ->
 				begin try find a tl (fun () -> Abstract.find_to a tl tleft)
 				with Not_found ->
 					let rec loop2 tcl = match tcl with
 						| tc :: tcl ->
 							if not (type_iseq tc tright) then loop tleft (apply_params a.a_params tl tc)
 							else loop2 tcl
-						| [] -> raise Not_found
+						| [] ->
+							if is_ta then
+								Exttyper.Transitive.make_cast_with_module ctx.m.curmod cast_stack when_found ftleft eright p
+							else
+								raise Not_found
+
 					in
 					loop2 a.a_to
 				end
-			| _ ->
-				raise Not_found
+			| _ as ftleft, _ ->
+				if Refs.is_any_implicit_conversion_allowed() then
+					Exttyper.Transitive.make_cast_with_module ctx.m.curmod cast_stack when_found ftleft eright p
+				else
+					raise Not_found
 			in
 			loop tleft eright.etype
 		end

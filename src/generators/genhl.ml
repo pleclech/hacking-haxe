@@ -426,6 +426,9 @@ let rec to_type ?tref ctx t =
 			loop tl
 		| _ -> class_type ~tref ctx c pl false)
 	| TAbstract (a,pl) ->
+		if Meta.has Meta.AllowUnderlyingType a.a_meta then
+			to_type ?tref ctx (Abstract.get_underlying_type a pl)
+		else
 		if Meta.has Meta.CoreType a.a_meta then
 			(match a.a_path with
 			| [], "Void" -> HVoid

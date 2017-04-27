@@ -1,8 +1,16 @@
 PLATFORM=win
 MAKEFILENAME=Makefile.win
 include Makefile
-OUTPUT=haxe.exe
+
 EXTENSION=.exe
+
+ifdef DEBUG
+OUTPUT=haxe.byte
+BYTECODE=1
+else
+OUTPUT=haxe.exe
+endif
+
 PACKAGE_SRC_EXTENSION=.zip
 
 kill:

@@ -537,6 +537,14 @@ try
 		), ": add debug information to the compiled code");
 	] in
 	let adv_args_spec = [
+		("--warn-on-implicit-conversion", define Define.WarnOnImplicitConversion, ": get a warning when an implicit conversion is done");
+		("-implicitConversion", Arg.String (fun mode ->
+			(match mode with
+			| "normal" | "ifAbstract" | "ifAny" -> ()
+			| _ -> raise (Arg.Bad "Invalid implicit conversion mode, expected normal | ifAbstract | ifAny"));
+			Refs.set_implicit_conversion_from_string mode;
+			Common.define_value com Define.ImplicitConversion mode
+		),"[normal|ifAbstract|ifAny] : set the implicit conversion mode (default normal)");
 		("-dce", Arg.String (fun mode ->
 			(match mode with
 			| "std" | "full" | "no" -> ()

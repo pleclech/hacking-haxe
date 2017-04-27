@@ -185,7 +185,7 @@ and mark_t dce p t =
 		| TAbstract(a,pl) ->
 			mark_abstract dce a;
 			List.iter (mark_t dce p) pl;
-			if not (Meta.has Meta.CoreType a.a_meta) then
+			if Meta.has Meta.AllowUnderlyingType a.a_meta || not (Meta.has Meta.CoreType a.a_meta) then
 				mark_t dce p (Abstract.get_underlying_type a pl)
 		| TLazy _ | TDynamic _ | TType _ | TAnon _ | TMono _ -> ()
 		end;
@@ -240,7 +240,7 @@ let rec to_string dce t = match t with
 			to_string dce (apply_params tt.t_params tl tt.t_type)
 		end
 	| TAbstract({a_impl = Some c} as a,tl) ->
-		if Meta.has Meta.CoreType a.a_meta then
+		if not (Meta.has Meta.AllowUnderlyingType a.a_meta) && Meta.has Meta.CoreType a.a_meta then
 			field dce c "toString" false
 		else
 			to_string dce (Abstract.get_underlying_type a tl)
@@ -326,7 +326,7 @@ and mark_directly_used_t com p t =
 		end
 	| TAbstract(a,pl) ->
 		List.iter (mark_directly_used_t com p) pl;
-		if not (Meta.has Meta.CoreType a.a_meta) then
+		if Meta.has Meta.AllowUnderlyingType a.a_meta || not (Meta.has Meta.CoreType a.a_meta) then
 			mark_directly_used_t com p (Abstract.get_underlying_type a pl)
 	| _ ->
 		()
@@ -347,16 +347,19 @@ and check_anon_write dce fa =
 	check_and_add_feature dce ("anon_write." ^ n)
 
 and is_array t = match follow t with
+	| TAbstract(a,tl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) -> is_array (Abstract.get_underlying_type a tl)
 	| TAbstract(a,tl) when not (Meta.has Meta.CoreType a.a_meta) -> is_array (Abstract.get_underlying_type a tl)
 	| TInst({ cl_path = ([], "Array")},_) -> true
 	| _ -> false
 
 and is_dynamic t = match follow t with
+	| TAbstract(a,tl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) -> is_dynamic (Abstract.get_underlying_type a tl)
 	| TAbstract(a,tl) when not (Meta.has Meta.CoreType a.a_meta) -> is_dynamic (Abstract.get_underlying_type a tl)
 	| TDynamic _ -> true
 	| _ -> false
 
 and is_string t = match follow t with
+	| TAbstract(a,tl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) -> is_string (Abstract.get_underlying_type a tl)
 	| TAbstract(a,tl) when not (Meta.has Meta.CoreType a.a_meta) -> is_string (Abstract.get_underlying_type a tl)
 	| TInst( { cl_path = ([], "String")}, _) -> true
 	| _ -> false

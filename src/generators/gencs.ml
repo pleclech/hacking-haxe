@@ -43,6 +43,8 @@ let rec is_cs_basic_type t =
 			false
 		| TAbstract _ when like_float t ->
 			true
+		| TAbstract(a,pl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+			is_cs_basic_type (Abstract.get_underlying_type a pl)
 		| TAbstract(a,pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 			is_cs_basic_type (Abstract.get_underlying_type a pl)
 		| TEnum(e, _) when not (Meta.has Meta.Class e.e_meta) -> true

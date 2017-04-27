@@ -40,6 +40,10 @@ FINDLIB_PACKAGES=$(FINDLIB_LIBS:%=-package %)
 CFLAGS=
 ALL_CFLAGS=-bin-annot -thread -g -w -3 $(CFLAGS) $(ALL_INCLUDES) $(FINDLIB_PACKAGES)
 
+ifdef DEBUG
+BYTECODE=1
+endif
+
 ifeq ($(BYTECODE),1)
 	TARGET_FLAG = bytecode
 	COMPILER = ocamlfind ocamlc

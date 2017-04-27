@@ -300,6 +300,22 @@ and module_def = {
 	m_extra : module_def_extra;
 }
 
+and abstract_graph_edge_t =
+	| FromField of (tabstract * t list) * (t * tclass_field) * t
+	| ToField of (tabstract * t list) * (t * tclass_field) * t
+	| From of (tabstract * t list) * t * t
+	| To of (tabstract * t list) * t * t
+
+and abstract_graph_t = {
+	edges: (t * abstract_graph_edge_t list ref) list;
+	preds: (t * t list ref) list;
+}
+
+and abstract_graph_builder_t = {
+	mutable build: unit -> abstract_graph_t;
+	mutable set_m_types: module_type list -> module_type list;
+}
+
 and module_def_extra = {
 	m_file : string;
 	m_sign : string;
@@ -315,6 +331,7 @@ and module_def_extra = {
 	mutable m_macro_calls : string list;
 	mutable m_if_feature : (string *(tclass * tclass_field * bool)) list;
 	mutable m_features : (string,bool) Hashtbl.t;
+	mutable m_agraph : abstract_graph_builder_t;
 }
 
 and module_kind =
@@ -332,14 +349,20 @@ and build_state =
 
 (* ======= General utility ======= *)
 
+let set_m_types m mtypes = m.m_types <- m.m_extra.m_agraph.set_m_types (mtypes)
+
+let append_m_types m mtypes = m.m_types <- m.m_extra.m_agraph.set_m_types (mtypes@m.m_types)
+
+let prepend_m_types m mtypes = m.m_types <- m.m_extra.m_agraph.set_m_types (m.m_types@mtypes)
+
+let append_m_type m mtype = m.m_types <- m.m_extra.m_agraph.set_m_types (mtype::m.m_types)
+
 let alloc_var =
 	let uid = ref 0 in
-	(fun n t p -> incr uid; { v_name = n; v_type = t; v_id = !uid; v_capture = false; v_extra = None; v_meta = []; v_pos = p })
+	(fun ?(meta=[]) n t p -> incr uid; { v_name = n; v_type = t; v_id = !uid; v_capture = false; v_extra = None; v_meta = meta; v_pos = p })
 
 let alloc_unbound_var n t p =
-	let v = alloc_var n t p in
-	v.v_meta <- [Meta.Unbound,[],null_pos];
-	v
+	alloc_var ~meta:[Meta.Unbound,[],null_pos] n t p
 
 let alloc_mid =
 	let mid = ref 0 in
@@ -421,6 +444,7 @@ let module_extra file sign time kind policy =
 		m_if_feature = [];
 		m_features = Hashtbl.create 0;
 		m_check_policy = policy;
+		m_agraph = {build = (fun() -> assert false); set_m_types = (fun _ -> assert false);};
 	}
 
 
@@ -709,6 +733,32 @@ let rec has_mono t = match t with
 		PMap.fold (fun cf b -> has_mono cf.cf_type || b) a.a_fields false
 	| TLazy r ->
 		has_mono (!r())
+
+let save_monos t =
+	let monos = ref [] in
+	let rec loop t =
+		match t with
+		| TMono r ->
+			(match !r with 
+			| None -> monos := r :: !monos
+			| Some t -> loop t
+			)
+		| TInst(_,pl) | TEnum(_,pl) | TAbstract(_,pl) | TType(_,pl) ->
+			List.iter loop pl
+		| TDynamic _ -> ()
+		| TFun(args,r) ->
+			loop r;
+			List.iter (fun (_,_,t) -> loop t) args
+		| TAnon a ->
+			PMap.iter (fun k cf -> loop cf.cf_type) a.a_fields
+		| TLazy r ->
+			loop (!r())
+	in 
+	ignore(loop t);
+	(fun () ->
+		List.iter (fun r -> r := None) !monos;
+		monos := []
+	)
 
 let concat e1 e2 =
 	let e = (match e1.eexpr, e2.eexpr with
@@ -1696,7 +1746,21 @@ let rec type_eq param a b =
 		type_eq param a b
 	| TAbstract (a1,tl1) , TAbstract (a2,tl2) ->
 		if a1 != a2 && not (param = EqCoreType && a1.a_path = a2.a_path) then error [cannot_unify a b];
-		List.iter2 (type_eq param) tl1 tl2
+		if Meta.has Meta.UnorderedCheckTypeParameter a1.a_meta || Meta.has Meta.UnorderedCheckTypeParameter a2.a_meta then begin
+			let rec teq x ys nys = match ys with 
+			| [] -> error [cannot_unify a b]
+			| y::ys ->
+				(try
+					type_eq param x y;
+					nys@ys
+				with Unify_error l -> teq x ys (y::nys) 
+				)
+			in 
+			let tl2_ref = ref tl2 in
+			List.iter(fun x -> tl2_ref := teq x !tl2_ref []) tl1;
+			if (!tl2_ref) != [] then error [cannot_unify a b]
+		end else
+			List.iter2 (type_eq param) tl1 tl2
 	| TAnon a1, TAnon a2 ->
 		(try
 			PMap.iter (fun n f1 ->
@@ -2093,7 +2157,7 @@ and unify_anons a b a1 a2 =
 	with
 		Unify_error l -> error (cannot_unify a b :: l))
 
-and unify_from ab tl a b ?(allow_transitive_cast=true) t =
+and unify_from ab tl a b ?(store_failed=ref []) ?(allow_transitive_cast=true) t =
 	if (List.exists (fun (a2,b2) -> fast_eq a a2 && fast_eq b b2) (!abstract_cast_stack)) then false else begin
 	abstract_cast_stack := (a,b) :: !abstract_cast_stack;
 	let t = apply_params ab.a_params tl t in
@@ -2102,22 +2166,24 @@ and unify_from ab tl a b ?(allow_transitive_cast=true) t =
 		unify_func a t;
 		true
 	with Unify_error _ ->
+		store_failed := (From((ab, tl), a, t),t)::!store_failed;
 		false
 	in
 	abstract_cast_stack := List.tl !abstract_cast_stack;
 	b
 	end
 
-and unify_to ab tl b ?(allow_transitive_cast=true) t =
+and unify_to ab tl b ?(store_failed=ref []) ?(allow_transitive_cast=true) t =
 	let t = apply_params ab.a_params tl t in
 	let unify_func = if allow_transitive_cast then unify else type_eq EqStrict in
 	try
 		unify_func t b;
 		true
 	with Unify_error _ ->
+		store_failed := (To((ab, tl), t, b), b)::!store_failed;
 		false
 
-and unify_from_field ab tl a b ?(allow_transitive_cast=true) (t,cf) =
+and unify_from_field ab tl a b ?(store_failed=ref []) ?(allow_transitive_cast=true) (t,cf) =
 	if (List.exists (fun (a2,b2) -> fast_eq a a2 && fast_eq b b2) (!abstract_cast_stack)) then false else begin
 	abstract_cast_stack := (a,b) :: !abstract_cast_stack;
 	let unify_func = if allow_transitive_cast then unify else type_eq EqStrict in
@@ -2126,13 +2192,15 @@ and unify_from_field ab tl a b ?(allow_transitive_cast=true) (t,cf) =
 			| TFun(_,r) ->
 				let monos = List.map (fun _ -> mk_mono()) cf.cf_params in
 				let map t = apply_params ab.a_params tl (apply_params cf.cf_params monos t) in
-				unify_func a (map t);
+				let b' = map t in
+				(try unify_func a b' with Unify_error _ as e -> let r = follow a in store_failed := (FromField((ab, tl), (t,cf), r), r)::!store_failed; raise e);
 				List.iter2 (fun m (name,t) -> match follow t with
 					| TInst ({ cl_kind = KTypeParameter constr },_) when constr <> [] ->
 						List.iter (fun tc -> match follow m with TMono _ -> raise (Unify_error []) | _ -> unify m (map tc) ) constr
 					| _ -> ()
 				) monos cf.cf_params;
-				unify_func (map r) b;
+				let a' = map r in
+				(try unify_func a' b with Unify_error _ as e -> let r = follow a' in store_failed := (FromField((ab, tl), (t,cf), r), r)::!store_failed; raise e)
 			| _ -> assert false
 		end;
 		true
@@ -2142,11 +2210,12 @@ and unify_from_field ab tl a b ?(allow_transitive_cast=true) (t,cf) =
 	b
 	end
 
-and unify_to_field ab tl b ?(allow_transitive_cast=true) (t,cf) =
+and unify_to_field ab tl b ?(store_failed=ref []) ?(allow_transitive_cast=true) (t,cf) =
 	let a = TAbstract(ab,tl) in
 	if (List.exists (fun (b2,a2) -> fast_eq a a2 && fast_eq b b2) (!abstract_cast_stack)) then false else begin
 	abstract_cast_stack := (b,a) :: !abstract_cast_stack;
 	let unify_func = if allow_transitive_cast then unify else type_eq EqStrict in
+	let a_monos = save_monos a in
 	let r = try
 		begin match follow cf.cf_type with
 			| TFun((_,_,ta) :: _,_) ->
@@ -2162,11 +2231,14 @@ and unify_to_field ab tl b ?(allow_transitive_cast=true) (t,cf) =
 						List.iter (fun tc -> match follow m with TMono _ -> raise (Unify_error []) | _ -> unify m (map tc) ) constr
 					| _ -> ()
 				) monos cf.cf_params;
-				unify_func (map t) b;
+				let a = (map t) in
+				(try unify_func a b with Unify_error _ as e -> let r = follow a in store_failed := (ToField((ab, tl), (t,cf) , r), r)::!store_failed; raise e)
 			| _ -> assert false
 		end;
 		true
-	with Unify_error _ -> false
+	with Unify_error _ ->
+		a_monos();
+		false
 	in
 	abstract_cast_stack := List.tl !abstract_cast_stack;
 	r

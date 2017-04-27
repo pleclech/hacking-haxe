@@ -313,6 +313,8 @@ let is_dynamic_iterator ctx e =
 			| TDynamic _
 			| TMono _ ->
 				true
+			| TAbstract(a,tl) when (Meta.has Meta.AllowUnderlyingType a.a_meta) ->
+				loop (Abstract.get_underlying_type a tl)
 			| TAbstract(a,tl) when not (Meta.has Meta.CoreType a.a_meta) ->
 				loop (Abstract.get_underlying_type a tl)
 			| _ -> false

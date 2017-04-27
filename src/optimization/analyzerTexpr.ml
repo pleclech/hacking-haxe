@@ -198,6 +198,8 @@ let type_change_ok com t1 t2 =
 				false
 			| TInst ({ cl_kind = KTypeParameter _ },_) ->
 				false
+			| TAbstract (a,tl) when Meta.has Meta.AllowUnderlyingType a.a_meta ->
+				not (Meta.has Meta.NotNull a.a_meta) && is_nullable_or_whatever (apply_params a.a_params tl a.a_this)
 			| TAbstract (a,_) when Meta.has Meta.CoreType a.a_meta ->
 				not (Meta.has Meta.NotNull a.a_meta)
 			| TAbstract (a,tl) ->

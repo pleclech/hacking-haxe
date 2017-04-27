@@ -6,6 +6,8 @@ type strict_meta =
 	| Access
 	| Accessor
 	| Allow
+	| AllowUnderlyingType
+	| AllowWrite
 	| Analyzer
 	| Annotation
 	| ArrayAccess
@@ -63,6 +65,7 @@ type strict_meta =
 	| GenericInstance
 	| Getter
 	| Hack
+	| HasObjectSingleton
 	| HasUntyped
 	| HaxeGeneric
 	| HeaderClassCode
@@ -73,7 +76,10 @@ type strict_meta =
 	| IfFeature
 	| Impl
 	| PythonImport
+	| Implicit
+	| ImplicitParam
 	| ImplicitCast
+	| ImplicitConversion
 	| Include
 	| InitPackage
 	| InlineConstructorVariable
@@ -114,6 +120,7 @@ type strict_meta =
 	| Ns
 	| Objc
 	| ObjcProtocol
+	| Object
 	| Op
 	| Optional
 	| Overload
@@ -122,6 +129,7 @@ type strict_meta =
 	| PhpClassConst
 	| PhpMagic
 	| PhpNoConstructor
+	| Private
 	| PrivateAccess
 	| Property
 	| Protected
@@ -140,6 +148,7 @@ type strict_meta =
 	| RuntimeValue
 	| Scalar
 	| SelfCall
+	| SelfCallApply
 	| Setter
 	| SkipCtor
 	| SkipReflection
@@ -162,11 +171,13 @@ type strict_meta =
 	| Volatile
 	| Unbound
 	| UnifyMinDynamic
+	| UnorderedCheckTypeParameter
 	| Unreflective
 	| Unsafe
 	| Usage
 	| Used
 	| UserVariable
+	| Val
 	| Value
 	| Void
 	| Last
@@ -200,8 +211,10 @@ let get_info = function
 	| Abi -> ":abi",("Function ABI/calling convention",[Platforms [Cpp]])
 	| Abstract -> ":abstract",("Sets the underlying class implementation as 'abstract'",[Platforms [Java;Cs]])
 	| Access -> ":access",("Forces private access to package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
-	| Accessor -> ":accessor",("Used internally by DCE to mark property accessors",[UsedOn TClassField;UsedInternally])
+	| Accessor -> ":accessor",("Used internally by DCE to mark property accessors",[UsedOn TClassField;UsedInternally])	
 	| Allow -> ":allow",("Allows private access from package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
+	| AllowUnderlyingType -> ":allowUnderlyingType",("Allow a coreType abstract to have an underlying type", [UsedOn TAbstract])
+	| AllowWrite -> ":allowWrite",("Allows private writing from package, type or field",[HasParam "Target path";UsedOnEither [TClass;TClassField]])
 	| Analyzer -> ":analyzer",("Used to configure the static analyzer",[])
 	| Annotation -> ":annotation",("Annotation (@interface) definitions on -java-lib imports will be annotated with this metadata. Has no effect on types compiled by Haxe",[Platform Java; UsedOn TClass])
 	| ArrayAccess -> ":arrayAccess",("Allows [] access on an abstract",[UsedOnEither [TAbstract;TAbstractField]])
@@ -259,6 +272,7 @@ let get_info = function
 	| GenericInstance -> ":genericInstance",("Internally used to mark instances of @:generic methods",[UsedOn TClassField;UsedInternally])
 	| Getter -> ":getter",("Generates a native getter function on the given field",[HasParam "Class field name";UsedOn TClassField;Platform Flash])
 	| Hack -> ":hack",("Allows extending classes marked as @:final",[UsedOn TClass])
+	| HasObjectSingleton -> (":has_object_singleton",("Used internally",[UsedInternally]))
 	| HasUntyped -> (":has_untyped",("Used by the typer to mark fields that have untyped expressions",[UsedInternally]))
 	| HaxeGeneric -> ":haxeGeneric",("Used internally to annotate non-native generic classes",[Platform Cs; UsedOnEither[TClass;TEnum]; UsedInternally])
 	| HeaderClassCode -> ":headerClassCode",("Code to be injected into the generated class, in the header",[Platform Cpp])
@@ -269,7 +283,10 @@ let get_info = function
 	| IfFeature -> ":ifFeature",("Causes a field to be kept by DCE if the given feature is part of the compilation",[HasParam "Feature name";UsedOn TClassField])
 	| Impl -> ":impl",("Used internally to mark abstract implementation fields",[UsedOn TAbstractField; UsedInternally])
 	| PythonImport -> ":pythonImport",("Generates python import statement for extern classes",[Platforms [Python]; UsedOn TClass])
+	| Implicit -> ":implicit", ("Mark an expression as implicitly available for looking for", [UsedOn TClass])
+	| ImplicitParam -> ":implicitParam", ("Mark a function argument to be elligible for implicit resolution", [UsedInternally])	
 	| ImplicitCast -> ":implicitCast",("Generated automatically on the AST when an implicit abstract cast happens",[UsedInternally; UsedOn TExpr])
+	| ImplicitConversion-> ":implicitConversion",("allow deeper implicit conversion from right to left expression. if set to abstract conversion will be done only if one of two type is an Abstract. if set to any will try to pick any conversion that can be done",[UsedOnEither [TClass;TClassField;]])
 	| Include -> ":include",("",[Platform Cpp])
 	| InitPackage -> ":initPackage",("Some weird thing for Genjs we want to remove someday",[UsedInternally; Platform Js])
 	| InlineConstructorVariable -> ":inlineConstructorVariable",("Internally used to mark variables that come from inlined constructors",[UsedInternally])
@@ -310,6 +327,7 @@ let get_info = function
 	| Ns -> ":ns",("Internally used by the Swf generator to handle namespaces",[Platform Flash])
 	| Objc -> ":objc",("Declares a class or interface that is used to interoperate with Objective-C code",[Platform Cpp;UsedOn TClass])
 	| ObjcProtocol -> ":objcProtocol",("Associates an interface with, or describes a function in, a native Objective-C protocol.",[Platform Cpp;UsedOnEither [TClass;TClassField] ])
+	| Object -> ":object",("Declares a class to act as an object",[UsedOn TClass])
 	| Op -> ":op",("Declares an abstract field as being an operator overload",[HasParam "The operation";UsedOn TAbstractField])
 	| Optional -> ":optional",("Marks the field of a structure as optional",[UsedOn TClassField])
 	| Overload -> ":overload",("Allows the field to be called with different argument types",[HasParam "Function specification (no expression)";UsedOn TClassField])
@@ -321,6 +339,7 @@ let get_info = function
 	| Public -> ":public",("Marks a class field as being public",[UsedOn TClassField;UsedInternally])
 	| PublicFields -> ":publicFields",("Forces all class fields of inheriting classes to be public",[UsedOn TClass])
 	| QuotedField -> ":quotedField",("Used internally to mark structure fields which are quoted in syntax",[UsedInternally])
+	| Private -> ":private",("Marks a class field as being pseudo private",[UsedOn TClassField])
 	| PrivateAccess -> ":privateAccess",("Allow private access to anything for the annotated expression",[UsedOn TExpr])
 	| Protected -> ":protected",("Marks a class field as being protected",[UsedOn TClassField;Platforms [Cs;Java;Flash]])
 	| Property -> ":property",("Marks a property field to be compiled as a native C# property",[UsedOn TClassField;Platform Cs])
@@ -336,6 +355,7 @@ let get_info = function
 	| RuntimeValue -> ":runtimeValue",("Marks an abstract as being a runtime value",[UsedOn TAbstract])
 	| Scalar -> ":scalar",("Used by hxcpp to mark a custom coreType abstract",[UsedOn TAbstract; Platform Cpp])
 	| SelfCall -> ":selfCall",("Translates method calls into calling object directly",[UsedOn TClassField; Platform Js])
+	| SelfCallApply -> ":selfCallApply",("Translates direct object calling to a method call",[UsedOn TClass;])
 	| Setter -> ":setter",("Generates a native setter function on the given field",[HasParam "Class field name";UsedOn TClassField;Platform Flash])
 	| StackOnly -> ":stackOnly",("Instances of this type can only appear on the stack",[Platform Cpp])
 	| StoredTypedExpr -> ":storedTypedExpr",("Used internally to reference a typed expression returned from a macro",[UsedInternally])
@@ -357,12 +377,14 @@ let get_info = function
 	| ValueUsed -> ":valueUsed",("Internally used by DCE to mark an abstract value as used",[UsedInternally])
 	| Volatile -> ":volatile",("",[Platforms [Java;Cs]])
 	| Unbound -> ":unbound", ("Compiler internal to denote unbounded global variable",[UsedInternally])
+	| UnorderedCheckTypeParameter -> ":unorderedCheckTypeParameter", ("Internal to allow checking of type parameter of two abstract in an unordered maner",[UsedInternally])
 	| UnifyMinDynamic -> ":unifyMinDynamic",("Allows a collection of types to unify to Dynamic",[UsedOn TClassField])
 	| Unreflective -> ":unreflective",("",[Platform Cpp])
 	| Unsafe -> ":unsafe",("Declares a class, or a method with the C#'s 'unsafe' flag",[Platform Cs; UsedOnEither [TClass;TClassField]])
 	| Usage -> ":usage",("Internal metadata used to mark a symbol for which usage request was invoked",[UsedInternally])
 	| Used -> ":used",("Internally used by DCE to mark a class or field as used",[UsedInternally])
 	| UserVariable -> ":userVariable",("Internally used to mark variables that come from user code",[UsedInternally])
+	| Val -> ":val", ("Internally use to mark a var as readonly", [UsedInternally])
 	| Value -> ":value",("Used to store default values for fields and function arguments",[UsedOn TClassField])
 	| Void -> ":void",("Use Cpp native 'void' return type",[Platform Cpp])
 	| Last -> assert false
