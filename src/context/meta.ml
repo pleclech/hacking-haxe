@@ -82,6 +82,7 @@ type strict_meta =
 	| ImplicitConversion
 	| Include
 	| InitPackage
+	| InlineConstructorArgument of int * int
 	| InlineConstructorVariable
 	| Internal
 	| IsVar
@@ -289,6 +290,7 @@ let get_info = function
 	| ImplicitConversion-> ":implicitConversion",("allow deeper implicit conversion from right to left expression. if set to abstract conversion will be done only if one of two type is an Abstract. if set to any will try to pick any conversion that can be done",[UsedOnEither [TClass;TClassField;]])
 	| Include -> ":include",("",[Platform Cpp])
 	| InitPackage -> ":initPackage",("Some weird thing for Genjs we want to remove someday",[UsedInternally; Platform Js])
+	| InlineConstructorArgument _ -> ":inlineConstructorArgument",("Internally used to mark expressions that were passed as arguments of an inlined constructor",[UsedInternally])
 	| InlineConstructorVariable -> ":inlineConstructorVariable",("Internally used to mark variables that come from inlined constructors",[UsedInternally])
 	| Internal -> ":internal",("Generates the annotated field/class with 'internal' access",[Platforms [Java;Cs]; UsedOnEither[TClass;TEnum;TClassField]])
 	| IsVar -> ":isVar",("Forces a physical field to be generated for properties that otherwise would not require one",[UsedOn TClassField])
