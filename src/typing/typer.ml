@@ -569,7 +569,7 @@ let rec unify_call_args' ?(meta=[]) ctx el args r callp inline force_inline =
 		with Error(l,p) when (match l with Call_error _ | Module_not_found _ -> false | _ -> true) ->
 			raise (WithTypeError (l,p))
 	in
-	let alloc_implicit, done_implicit = Exttyper.Implicit.resolver (cast_or_unify_raise) (fun e -> type_expr ctx e NoValue) (type_against) (add_local ctx) in
+	let resolve_implicit = Exttyper.Implicit.resolver (Typeload.load_instance ~force_no_generic:true ctx) (cast_or_unify_raise) (fun e -> type_expr ctx e NoValue) (type_against) in
 	let rec loop el args = match el,args with
 		| [],[] ->
 			begin match List.rev !invalid_skips with
@@ -587,7 +587,7 @@ let rec unify_call_args' ?(meta=[]) ctx el args r callp inline force_inline =
 		| [],(n,false,t) :: args2 ->
 			(try
 				ignore(Exttyper.Implicit.get_implicit_param n meta);
-				let et = alloc_implicit t ctx.locals ctx.m.module_implicits in
+				let et = resolve_implicit t ctx.locals ctx.m.module_implicits in
 				(et,false) :: loop [] args2
 			with Not_found -> call_error (Not_enough_arguments args) callp
 			)
@@ -620,15 +620,6 @@ let rec unify_call_args' ?(meta=[]) ctx el args r callp inline force_inline =
 	in
 	let el = try loop el args with exc -> ctx.in_call_args <- in_call_args; raise exc; in
 	ctx.in_call_args <- in_call_args;
-	done_implicit (fun blk -> 
-		ctx.wrap_with <- (fun et ->
-			{
-				eexpr = TBlock(blk@[et]);
-				etype = et.etype;
-				epos = null_pos;
-			}
-		) ::ctx.wrap_with
-	);
 	el,TFun(args,r)
 
 let wrap_call ctx call = match ctx.wrap_with with
@@ -772,7 +763,7 @@ let abstract_module_type a tl = {
 let rec type_module_type ctx t tparams p =
 	match t with
 	| TClassDecl {cl_kind = KGenericBuild _} ->
-		let _,_,f = Typeload.build_instance ctx t p in
+		let _,_,f = Typeload.build_instance ctx t p false in
 		let t = f (match tparams with None -> [] | Some tl -> tl) in
 		let mt = try
 			module_type_of_type t

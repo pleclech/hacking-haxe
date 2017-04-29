@@ -89,7 +89,7 @@ type typer_globals = {
 	do_macro : typer -> macro_mode -> path -> string -> expr list -> pos -> expr option;
 	do_load_module : typer -> path -> pos -> module_def;
 	do_optimize : typer -> texpr -> texpr;
-	do_build_instance : typer -> module_type -> pos -> ((string * t) list * path * (t list -> t));
+	do_build_instance : typer -> module_type -> pos -> bool -> ((string * t) list * path * (t list -> t));
 	do_format_string : typer -> string -> pos -> Ast.expr;
 	do_finalize : typer -> unit;
 	do_generate : typer -> (texpr option * module_type list * module_def list);

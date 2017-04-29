@@ -408,7 +408,7 @@ let check_param_constraints ctx types t pl c p =
 			let ti = (match follow ti with
 				| TInst ({ cl_kind = KGeneric } as c,pl) ->
 					(* if we solve a generic contraint, let's substitute with the actual generic instance before unifying *)
-					let _,_, f = ctx.g.do_build_instance ctx (TClassDecl c) p in
+					let _,_, f = ctx.g.do_build_instance ctx (TClassDecl c) p false in
 					f pl
 				| _ -> ti
 			) in
@@ -435,7 +435,7 @@ let pselect p1 p2 =
 	if p1 = null_pos then p2 else p1
 
 (* build an instance from a full type *)
-let rec load_instance ?(allow_display=false) ctx (t,pn) allow_no_params p =
+let rec load_instance ?(allow_display=false) ?(force_no_generic=false) ctx (t,pn) allow_no_params p =
 	let p = pselect pn p in
 	let t = try
 		if t.tpackage <> [] || t.tsub <> None then raise Not_found;
@@ -449,7 +449,8 @@ let rec load_instance ?(allow_display=false) ctx (t,pn) allow_no_params p =
 			| TClassDecl {cl_kind = KGenericBuild _} -> false,true
 			| _ -> false,false
 		in
-		let types , path , f = ctx.g.do_build_instance ctx mt p in
+		let is_generic = is_generic && (not force_no_generic) in
+		let types , path , f = ctx.g.do_build_instance ctx mt p force_no_generic in
 		let is_rest = is_generic_build && (match types with ["Rest",_] -> true | _ -> false) in
 		if allow_no_params && t.tparams = [] && not is_rest then begin
 			let pl = ref [] in
@@ -3016,7 +3017,7 @@ let init_module_type ctx context_init do_init (decl,p) =
 				let rebind t name =
 					if not (name.[0] >= 'A' && name.[0] <= 'Z') then
 						error "Type aliases must start with an uppercase letter" p;
-					let _, _, f = ctx.g.do_build_instance ctx t p_type in
+					let _, _, f = ctx.g.do_build_instance ctx t p_type false in
 					(* create a temp private typedef, does not register it in module *)
 					TTypeDecl {
 						t_path = (fst md.m_path @ ["_" ^ snd md.m_path],name);
@@ -3902,7 +3903,7 @@ let rec generic_substitute_type gctx t =
 	match t with
 	| TInst ({ cl_kind = KGeneric } as c2,tl2) ->
 		(* maybe loop, or generate cascading generics *)
-		let _, _, f = gctx.ctx.g.do_build_instance gctx.ctx (TClassDecl c2) gctx.p in
+		let _, _, f = gctx.ctx.g.do_build_instance gctx.ctx (TClassDecl c2) gctx.p false in
 		let t = f (List.map (generic_substitute_type gctx) tl2) in
 		(match follow t,gctx.mg with TInst(c,_), Some m -> add_dependency m c.cl_module | _ -> ());
 		t
@@ -3926,7 +3927,7 @@ let generic_substitute_expr gctx e =
 	let rec build_expr e =
 		match e.eexpr with
 		| TField(e1, FInstance({cl_kind = KGeneric} as c,tl,cf)) ->
-			let _, _, f = gctx.ctx.g.do_build_instance gctx.ctx (TClassDecl c) gctx.p in
+			let _, _, f = gctx.ctx.g.do_build_instance gctx.ctx (TClassDecl c) gctx.p false in
 			let t = f (List.map (generic_substitute_type gctx) tl) in
 			let fa = try
 				quick_field t cf.cf_name
@@ -4268,7 +4269,7 @@ let build_macro_build ctx c pl cfl p =
 (* -------------------------------------------------------------------------- *)
 (* API EVENTS *)
 
-let build_instance ctx mtype p =
+let build_instance ctx mtype p force_no_generic =
 	match mtype with
 	| TClassDecl c ->
 		if ctx.pass > PBuildClass then ignore(c.cl_build());
@@ -4286,7 +4287,7 @@ let build_instance ctx mtype p =
 		in
 		let ft = (fun pl ->
 			match c.cl_kind with
-			| KGeneric ->
+			| KGeneric when not force_no_generic ->
 				build (fun () -> build_generic ctx c p pl) "build_generic"
 			| KMacroType ->
 				build (fun () -> build_macro_type ctx pl p) "macro_type"
