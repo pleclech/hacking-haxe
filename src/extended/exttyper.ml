@@ -518,9 +518,6 @@ end
 module Implicit = struct
 	exception Found of texpr
 
-	let show_implicits implicits =
-		List.iter (fun fe -> let e = fe([]) in Printf.printf "%s\n%!" ((!Refs.format_ref) ((Ast.s_expr e)) (pos e))) implicits
-
 	let get_implicit_param n meta =
 		List.find (fun m ->
 		match m with
@@ -536,10 +533,7 @@ module Implicit = struct
 		| EBlock(e::es) -> EBlock((extract_call e)::es),p
 		| _ -> extract_call ep
 
-	let search_and_allocate load_instance locals cast_or_unify_raise type_expr type_against t implicits =
-		(*Printf.printf "search for implicit %s through :\n" (s_type_kind t);
-		show_implicits implicits;*)
-		
+	let search_and_allocate load_instance locals cast_or_unify_raise type_expr type_against t implicits =		
 		let unify_raise e =
 			let et = type_expr e in
 			let et = cast_or_unify_raise t et et.epos in
@@ -574,7 +568,7 @@ module Implicit = struct
 										(match ti with
 										| TInst (tc, pms) when (List.length pms) > 0 ->
 											let et = type_against ti (EConst(Ident "null"), p) in
-											(cast_or_unify_raise t et et.epos);
+											ignore(cast_or_unify_raise t et et.epos);
 											(match follow et.etype with
 											| TInst(tc, pms) as ti ->
 												ENew(((match (try TExprToExpr.convert_type ti with Exit -> TExprToExpr.convert_type (TInst (tc,[]))) with CTPath ctp -> ctp, p | _ -> assert false)), args), pe
