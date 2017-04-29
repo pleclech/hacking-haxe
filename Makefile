@@ -30,7 +30,7 @@ CFLAGS= -bin-annot
 ALL_CFLAGS= $(CFLAGS) -g -w -3 -I libs/extlib -I libs/extc -I libs/neko -I libs/javalib -I libs/ziplib -I libs/swflib -I libs/xml-light -I libs/ttflib -I libs/ilib -I libs/objsize -I libs/pcre \
 	-I src -I src/context -I src/generators -I src/macro -I src/optimization -I src/syntax -I src/typing -I src/display -I src/extended
 
-LIBS=unix str libs/extlib/extLib libs/xml-light/xml-light libs/swflib/swflib \
+LIBS=unix str libs/extlib/extlib libs/xml-light/xml-light libs/swflib/swflib \
 	libs/extc/extc libs/neko/neko libs/javalib/javalib libs/ziplib/ziplib \
 	libs/ttflib/ttflib libs/ilib/ilib libs/objsize/objsize libs/pcre/pcre
 
