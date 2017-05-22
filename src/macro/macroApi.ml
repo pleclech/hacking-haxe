@@ -1,4 +1,7 @@
 open Ast
+open Typedef
+open Typeutility
+
 open Type
 open Common
 
@@ -12,17 +15,17 @@ exception Abort
 type 'value compiler_api = {
 	pos : Globals.pos;
 	get_com : unit -> Common.context;
-	get_type : string -> Type.t option;
-	get_module : string -> Type.t list;
+	get_type : string -> Typedef.t option;
+	get_module : string -> Typedef.t list;
 	after_typing : (module_type list -> unit) -> unit;
-	on_generate : (Type.t list -> unit) -> unit;
+	on_generate : (Typedef.t list -> unit) -> unit;
 	after_generate : (unit -> unit) -> unit;
 	on_type_not_found : (string -> 'value) -> unit;
 	parse_string : string -> Globals.pos -> bool -> Ast.expr;
-	type_expr : Ast.expr -> Type.texpr;
+	type_expr : Ast.expr -> Typedef.texpr;
 	resolve_type  : Ast.complex_type -> Globals.pos -> t;
-	type_macro_expr : Ast.expr -> Type.texpr;
-	store_typed_expr : Type.texpr -> Ast.expr;
+	type_macro_expr : Ast.expr -> Typedef.texpr;
+	store_typed_expr : Typedef.texpr -> Ast.expr;
 	allow_package : string -> unit;
 	type_patch : string -> string -> bool -> string option -> unit;
 	meta_patch : string -> string -> string option -> bool -> unit;
@@ -33,9 +36,9 @@ type 'value compiler_api = {
 	get_local_method : unit -> string;
 	get_local_imports : unit -> Ast.import list;
 	get_local_using : unit -> tclass list;
-	get_local_vars : unit -> (string, Type.tvar) PMap.t;
+	get_local_vars : unit -> (string, Typedef.tvar) PMap.t;
 	get_build_fields : unit -> 'value;
-	get_pattern_locals : Ast.expr -> Type.t -> (string,Type.tvar * Globals.pos) PMap.t;
+	get_pattern_locals : Ast.expr -> Typedef.t -> (string,Typedef.tvar * Globals.pos) PMap.t;
 	define_type : 'value -> string option -> unit;
 	define_module : string -> 'value list -> ((string * Globals.pos) list * Ast.import_mode) list -> Ast.type_path list -> unit;
 	module_dependency : string -> string -> bool -> unit;
@@ -45,7 +48,7 @@ type 'value compiler_api = {
 	delayed_macro : int -> (unit -> (unit -> 'value));
 	use_cache : unit -> bool;
 	format_string : string -> Globals.pos -> Ast.expr;
-	cast_or_unify : Type.t -> texpr -> Globals.pos -> Type.texpr;
+	cast_or_unify : Typedef.t -> texpr -> Globals.pos -> Typedef.texpr;
 	add_global_metadata : string -> string -> (bool * bool * bool) -> unit;
 	add_module_check_policy : string list -> int list -> bool -> int -> unit;
 }
@@ -149,8 +152,8 @@ module type InterpApi = sig
 	val encode_enum : enum_type -> Globals.pos option -> int -> value list -> value
 	val encode_string_map : ('a -> value) -> (string, 'a) PMap.t -> value
 
-	val encode_tdecl : Type.module_type -> value
-	val encode_lazytype : (unit -> Type.t) ref -> (unit -> value) -> value
+	val encode_tdecl : Typedef.module_type -> value
+	val encode_lazytype : (unit -> Typedef.t) ref -> (unit -> value) -> value
 	val encode_unsafe : Obj.t -> value
 
 	val field : value -> string -> value
@@ -163,8 +166,8 @@ module type InterpApi = sig
 
 	val decode_pos : value -> Globals.pos
 	val decode_enum : value -> int * value list
-	val decode_tdecl : value -> Type.module_type
-	val decode_lazytype : value -> (unit -> Type.t) ref
+	val decode_tdecl : value -> Typedef.module_type
+	val decode_lazytype : value -> (unit -> Typedef.t) ref
 	val decode_unsafe : value -> Obj.t
 
 	val decode_enum_with_pos : value -> (int * value list) * Globals.pos
@@ -920,7 +923,7 @@ and encode_cfield f =
 
 and encode_field_kind k =
 	let tag, pl = (match k with
-		| Type.Var v -> 0, [encode_var_access v.v_read; encode_var_access v.v_write]
+		| Typedef.Var v -> 0, [encode_var_access v.v_read; encode_var_access v.v_write]
 		| Method m -> 1, [encode_method_kind m]
 	) in
 	encode_enum IFieldKind tag pl
@@ -996,7 +999,7 @@ and encode_anon_status s =
 	let tag, pl = (match s with
 		| Closed -> 0, []
 		| Opened -> 1, []
-		| Type.Const -> 2, []
+		| Typedef.Const -> 2, []
 		| Extend tl -> 3, [encode_ref tl (fun tl -> encode_array (List.map encode_type tl)) (fun() -> "<extended types>")]
 		| Statics cl -> 4, [encode_clref cl]
 		| EnumStatics en -> 5, [encode_enref en]
@@ -1253,7 +1256,7 @@ let decode_method_kind v =
 
 let decode_field_kind v =
 	match decode_enum v with
-	| 0, [vr;vw] -> Type.Var({v_read = decode_var_access vr; v_write = decode_var_access vw})
+	| 0, [vr;vw] -> Typedef.Var({v_read = decode_var_access vr; v_write = decode_var_access vw})
 	| 1, [m] -> Method (decode_method_kind m)
 	| _ -> raise Invalid_expr
 
@@ -1476,7 +1479,7 @@ let macro_api ccom get_api =
 		"fatal_error", vfun2 (fun msg p ->
 			let msg = decode_string msg in
 			let p = decode_pos p in
-			raise (Error.Fatal_error (msg,p))
+			raise (Errordef.Fatal_error (msg,p))
 		);
 		"warning", vfun2 (fun msg p ->
 			let msg = decode_string msg in
@@ -1552,7 +1555,7 @@ let macro_api ccom get_api =
 		"unify", vfun2 (fun t1 t2 ->
 			let e1 = mk (TObjectDecl []) (decode_type t1) Globals.null_pos in
 			try ignore(((get_api()).cast_or_unify) (decode_type t2) e1 Globals.null_pos); vbool true
-			with Error.Error (Error.Unify _,_) -> vbool false
+			with Errordef.Error (Errordef.Unify _,_) -> vbool false
 		);
 		"typeof", vfun1 (fun v ->
 			encode_type ((get_api()).type_expr (decode_expr v)).etype
@@ -1564,11 +1567,11 @@ let macro_api ccom get_api =
 			encode_type ((get_api()).resolve_type (fst (decode_ctype t)) (decode_pos p));
 		);
 		"s_type", vfun1 (fun v ->
-			encode_string (Type.s_type (print_context()) (decode_type v))
+			encode_string (Typeutility.s_type (print_context()) (decode_type v))
 		);
 		"s_expr", vfun2 (fun v b ->
-			let f = if decode_opt_bool b then Type.s_expr_pretty false "" false else Type.s_expr_ast true "" in
-			encode_string (f (Type.s_type (print_context())) (decode_texpr v))
+			let f = if decode_opt_bool b then Typeutility.s_expr_pretty false "" false else Typeutility.s_expr_ast true "" in
+			encode_string (f (Typeutility.s_type (print_context())) (decode_texpr v))
 		);
 		"is_fmt_string", vfun1 (fun p ->
 			vbool (Lexer.is_fmt_string (decode_pos p))
@@ -1837,9 +1840,9 @@ let macro_api ccom get_api =
 						(* use non-physical equality check here to make apply_params work *)
 						snd (List.find (fun (_,t2) -> type_iseq t t2) tpl)
 					with Not_found ->
-						Type.map map t
+						Typeutility.map map t
 					end
-				| _ -> Type.map map t
+				| _ -> Typeutility.map map t
 			in
 			encode_type (apply_params tpl tl (map (decode_type t)))
 		);

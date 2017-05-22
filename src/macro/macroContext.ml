@@ -20,8 +20,13 @@
 open Ast
 open Common.DisplayMode
 open Common
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
+open Typecoredef
 open Typecore
+open Errordef
 open Error
 open Globals
 
@@ -104,7 +109,7 @@ let typing_timer ctx need_type f =
 			exit();
 			raise e
 
-let load_macro_ref : (typer -> bool -> path -> string -> pos -> (typer * ((string * bool * t) list * t * tclass * Type.tclass_field) * (Interp.value list -> Interp.value option))) ref = ref (fun _ _ _ _ -> assert false)
+let load_macro_ref : (typer -> bool -> path -> string -> pos -> (typer * ((string * bool * t) list * t * tclass * Typedef.tclass_field) * (Interp.value list -> Interp.value option))) ref = ref (fun _ _ _ _ -> assert false)
 
 let make_macro_api ctx p =
 	let parse_expr_string s p inl =

@@ -1,5 +1,9 @@
-open Meta
+
+open Typedef
+open Typeutility
+
 open Type
+
 open Error
 
 let find_to ab pl b =

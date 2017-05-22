@@ -17,7 +17,10 @@
 	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 *)
 open Gencommon
-open Type
+open Typedef
+open Typeutility
+
+
 
 (*
 	This module will take care of simplifying unnecessary casts, specially those made by the compiler

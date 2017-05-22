@@ -21,6 +21,9 @@ open ReflectionCFs
 open Globals
 open Ast
 open Common
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
 open Gencommon
 open Gencommon.SourceWriter
@@ -993,7 +996,7 @@ let generate con =
 				| TAbstract(a,pl) when not (Meta.has Meta.CoreType a.a_meta) ->
 					t_s (Abstract.get_underlying_type a pl)
 				(* No Lazy type nor Function type made. That's because function types will be at this point be converted into other types *)
-				| _ -> if !strict_mode then begin trace ("[ !TypeError " ^ (Type.s_type (Type.print_context()) t) ^ " ]"); assert false end else "[ !TypeError " ^ (Type.s_type (Type.print_context()) t) ^ " ]"
+				| _ -> if !strict_mode then begin trace ("[ !TypeError " ^ (Typeutility.s_type (Typeutility.print_context()) t) ^ " ]"); assert false end else "[ !TypeError " ^ (Typeutility.s_type (Typeutility.print_context()) t) ^ " ]"
 
 		and path_param_s md path params =
 				match params with
@@ -1123,7 +1126,7 @@ let generate con =
 			| TInst({ cl_interface = true; cl_extern = true } as cl, _), FNotFound ->
 				not (is_hxgen (TClassDecl cl))
 			| _, FClassField(_,_,decl,v,_,t,_) ->
-				Type.is_extern_field v && (Meta.has Meta.Property v.cf_meta || (decl.cl_extern && not (is_hxgen (TClassDecl decl))))
+				Typeutility.is_extern_field v && (Meta.has Meta.Property v.cf_meta || (decl.cl_extern && not (is_hxgen (TClassDecl decl))))
 			| _ -> false
 		in
 
@@ -2023,7 +2026,7 @@ let generate con =
 
 			(match cf.cf_kind with
 				| Var _
-				| Method (MethDynamic) when not (Type.is_extern_field cf) ->
+				| Method (MethDynamic) when not (Typeutility.is_extern_field cf) ->
 					(if is_overload || List.exists (fun cf -> cf.cf_expr <> None) cf.cf_overloads then
 						gen.gcon.error "Only normal (non-dynamic) methods can be overloaded" cf.cf_pos);
 					if not is_interface then begin
@@ -2039,7 +2042,7 @@ let generate con =
 						);
 						write w ";"
 					end (* TODO see how (get,set) variable handle when they are interfaces *)
-				| Method _ when Type.is_extern_field cf || (match cl.cl_kind, cf.cf_expr with | KAbstractImpl _, None -> true | _ -> false) ->
+				| Method _ when Typeutility.is_extern_field cf || (match cl.cl_kind, cf.cf_expr with | KAbstractImpl _, None -> true | _ -> false) ->
 					List.iter (fun cf -> if cl.cl_interface || cf.cf_expr <> None then
 						gen_class_field w ~is_overload:true is_static cl (Meta.has Meta.Final cf.cf_meta) cf
 					) cf.cf_overloads
@@ -2292,7 +2295,7 @@ let generate con =
 			let handle_prop static f =
 				match f.cf_kind with
 				| Method _ -> ()
-				| Var v when not (Type.is_extern_field f) -> ()
+				| Var v when not (Typeutility.is_extern_field f) -> ()
 				| Var v ->
 					let prop acc = match acc with
 						| AccNo | AccNever | AccCall -> true
@@ -2446,7 +2449,7 @@ let generate con =
 				let events, props, nonprops = ref [], ref [], ref [] in
 
 				List.iter (fun v -> match v.cf_kind with
-					| Var { v_read = AccCall } | Var { v_write = AccCall } when Type.is_extern_field v && Meta.has Meta.Property v.cf_meta ->
+					| Var { v_read = AccCall } | Var { v_write = AccCall } when Typeutility.is_extern_field v && Meta.has Meta.Property v.cf_meta ->
 						props := (v.cf_name, ref (v, v.cf_type, None, None)) :: !props;
 					| Var { v_read = AccNormal; v_write = AccNormal } when Meta.has Meta.Event v.cf_meta ->
 						events := (v.cf_name, ref (v, v.cf_type, false, None, None)) :: !events;

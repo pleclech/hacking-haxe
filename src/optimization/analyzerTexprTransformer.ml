@@ -19,9 +19,12 @@
 
 open Globals
 open Ast
+open Typedef
+open Typeutility
+
 open Type
 open Common
-open AnalyzerConfig
+
 open AnalyzerTypes
 open AnalyzerTypes.BasicBlock
 open AnalyzerTypes.Graph

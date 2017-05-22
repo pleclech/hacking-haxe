@@ -18,6 +18,9 @@
 *)
 open Option
 open Common
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
 open Codegen
 open Gencommon
@@ -199,7 +202,7 @@ let run ~explicit_fn_name ~get_vmtype gen =
 									eexpr = TFunction({
 										tf_args = List.rev new_args;
 										tf_type = ret;
-										tf_expr = Type.concat block (mk_block (f3_mk_return {
+										tf_expr = Typeutility.concat block (mk_block (f3_mk_return {
 											eexpr = TCall(
 												{
 													eexpr = TField(
@@ -228,7 +231,7 @@ let run ~explicit_fn_name ~get_vmtype gen =
 								f.cf_expr <- Some({ e with
 									eexpr = TFunction({ tf with
 										tf_args = List.rev new_args;
-										tf_expr = Type.concat block tf.tf_expr
+										tf_expr = Typeutility.concat block tf.tf_expr
 									});
 								});
 								f

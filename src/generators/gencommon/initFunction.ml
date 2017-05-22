@@ -17,7 +17,10 @@
 	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 *)
 open Common
-open Type
+open Typedef
+open Typeutility
+
+
 open Codegen
 open Gencommon
 
@@ -83,7 +86,7 @@ let handle_class com cl =
 					| Some e -> ensure_simple_expr com e);
 					acc
 			| Var _
-			| Method MethDynamic when not (Type.is_extern_field cf) ->
+			| Method MethDynamic when not (Typeutility.is_extern_field cf) ->
 				(match cf.cf_expr with
 				| Some e ->
 					(match cf.cf_params with
@@ -209,7 +212,7 @@ let handle_class com cl =
 							| _ ->
 								{ e with eexpr = TBlock (vars @ funs @ (hd :: tl)) })
 						| _ ->
-							Type.concat { e with eexpr = TBlock (vars @ funs) } e
+							Typeutility.concat { e with eexpr = TBlock (vars @ funs) } e
 					in
 					let tf_expr = add_fn (mk_block tf.tf_expr) in
 					{ e with eexpr = TFunction { tf with tf_expr = tf_expr } }

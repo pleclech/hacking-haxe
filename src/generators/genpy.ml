@@ -19,7 +19,10 @@
 
 open Globals
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Common
 open Codegen.ExprBuilder
 
@@ -124,18 +127,18 @@ module Transformer = struct
 		c_reflect := fun () -> Utils.class_of_module_type (Utils.find_type com ([],"Reflect"))
 
 	and debug_expr e =
-		let s_type = Type.s_type (print_context()) in
-		let s = Type.s_expr_pretty false "    " false s_type e in
+		let s_type = Typeutility.s_type (print_context()) in
+		let s = Typeutility.s_expr_pretty false "    " false s_type e in
 		Printf.printf "%s\n" s
 
 	and debug_expr_with_type e =
-		let s_type = Type.s_type (print_context()) in
-		let es = Type.s_expr_pretty false "    " false s_type e in
+		let s_type = Typeutility.s_type (print_context()) in
+		let es = Typeutility.s_expr_pretty false "    " false s_type e in
 		let t = s_type e.etype in
 		Printf.printf "%s : %s\n" es t
 
 	and debug_type t =
-		let s_type = Type.s_type (print_context()) in
+		let s_type = Typeutility.s_type (print_context()) in
 		let t = s_type t in
 		Printf.printf "%s\n" t
 
@@ -294,7 +297,7 @@ module Transformer = struct
 				tf.tf_expr
 			| _ ->
 				let eb = mk (TBlock (List.rev assigns)) t_dynamic p in
-				Type.concat eb tf.tf_expr
+				Typeutility.concat eb tf.tf_expr
 		in
 		let e1 = to_expr (transform_expr ~next_id:(Some ae.a_next_id) body) in
 		let fn = mk (TFunction({
@@ -672,7 +675,7 @@ module Transformer = struct
 
 			let var_assign = mk (TVar (v,Some enext)) v.v_type a_expr.epos in
 
-			let ebody = Type.concat var_assign (a2) in
+			let ebody = Typeutility.concat var_assign (a2) in
 
 			let var_decl = mk (TVar (t_var,Some a1.a_expr)) (!t_void) e1.epos in
 			let twhile = mk (TWhile((mk (TParenthesis ehasnext) ehasnext.etype ehasnext.epos),ebody,NormalWhile)) (!t_void) e1.epos in

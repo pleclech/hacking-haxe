@@ -18,9 +18,12 @@
 *)
 open Swf
 open As3hl
-open Genswf9
+
 open ExtString
-open Type
+open Typedef
+open Typeutility
+
+
 open Common
 open Ast
 open Globals
@@ -97,7 +100,7 @@ let build_dependencies t =
 		add_type_rec [] t
 	and add_expr e =
 		match e.eexpr with
-		| TTypeExpr t -> add_path (Type.t_path t) DKExpr
+		| TTypeExpr t -> add_path (Typeutility.t_path t) DKExpr
 		| TNew (c,pl,el) ->
 			add_path c.cl_path DKExpr;
 			List.iter add_type pl;

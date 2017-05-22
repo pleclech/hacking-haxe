@@ -18,9 +18,14 @@
  *)
 
 open Ast
+open Typedef
+open Typeutility
+
 open Type
 open Common
-open Typecore
+open Typecoredef
+
+
 open Error
 open Globals
 

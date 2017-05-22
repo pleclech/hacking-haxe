@@ -20,6 +20,9 @@ open Option
 open Common
 open Ast
 open Globals
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
 open Codegen
 open Gencommon
@@ -157,23 +160,23 @@ let rec type_eq gen param a b =
 		()
 	else match follow_dyn (gen.greal_type a) , follow_dyn (gen.greal_type b) with
 	| TEnum (e1,tl1) , TEnum (e2,tl2) ->
-		if e1 != e2 && not (param = EqCoreType && e1.e_path = e2.e_path) then Type.error [cannot_unify a b];
+		if e1 != e2 && not (param = EqCoreType && e1.e_path = e2.e_path) then Typeunifyerror.error [cannot_unify a b];
 		List.iter2 (type_eq gen param) tl1 tl2
 	| TAbstract (a1,tl1) , TAbstract (a2,tl2) ->
-		if a1 != a2 && not (param = EqCoreType && a1.a_path = a2.a_path) then Type.error [cannot_unify a b];
+		if a1 != a2 && not (param = EqCoreType && a1.a_path = a2.a_path) then Typeunifyerror.error [cannot_unify a b];
 		List.iter2 (type_eq gen param) tl1 tl2
 	| TInst (c1,tl1) , TInst (c2,tl2) ->
-		if c1 != c2 && not (param = EqCoreType && c1.cl_path = c2.cl_path) && (match c1.cl_kind, c2.cl_kind with KExpr _, KExpr _ -> false | _ -> true) then Type.error [cannot_unify a b];
+		if c1 != c2 && not (param = EqCoreType && c1.cl_path = c2.cl_path) && (match c1.cl_kind, c2.cl_kind with KExpr _, KExpr _ -> false | _ -> true) then Typeunifyerror.error [cannot_unify a b];
 		List.iter2 (type_eq gen param) tl1 tl2
 	| TFun (l1,r1) , TFun (l2,r2) when List.length l1 = List.length l2 ->
 		(try
 			type_eq gen param r1 r2;
 			List.iter2 (fun (n,o1,t1) (_,o2,t2) ->
-				if o1 <> o2 then Type.error [Not_matching_optional n];
+				if o1 <> o2 then Typeunifyerror.error [Not_matching_optional n];
 				type_eq gen param t1 t2
 			) l1 l2
 		with
-			Unify_error l -> Type.error (cannot_unify a b :: l))
+			Unify_error l -> Typeunifyerror.error (cannot_unify a b :: l))
 	| TDynamic a , TDynamic b ->
 		type_eq gen param a b
 	| TAnon a1, TAnon a2 ->
@@ -181,33 +184,33 @@ let rec type_eq gen param a b =
 			PMap.iter (fun n f1 ->
 				try
 					let f2 = PMap.find n a2.a_fields in
-					if f1.cf_kind <> f2.cf_kind && (param = EqStrict || param = EqCoreType || not (unify_kind f1.cf_kind f2.cf_kind)) then Type.error [invalid_kind n f1.cf_kind f2.cf_kind];
+					if f1.cf_kind <> f2.cf_kind && (param = EqStrict || param = EqCoreType || not (unify_kind f1.cf_kind f2.cf_kind)) then Typeunifyerror.error [invalid_kind n f1.cf_kind f2.cf_kind];
 					try
 						type_eq gen param f1.cf_type f2.cf_type
 					with
-						Unify_error l -> Type.error (invalid_field n :: l)
+						Unify_error l -> Typeunifyerror.error (invalid_field n :: l)
 				with
 					Not_found ->
-						if is_closed a2 then Type.error [has_no_field b n];
-						if not (link (ref None) b f1.cf_type) then Type.error [cannot_unify a b];
+						if is_closed a2 then Typeunifyerror.error [has_no_field b n];
+						if not (link (ref None) b f1.cf_type) then Typeunifyerror.error [cannot_unify a b];
 						a2.a_fields <- PMap.add n f1 a2.a_fields
 			) a1.a_fields;
 			PMap.iter (fun n f2 ->
 				if not (PMap.mem n a1.a_fields) then begin
-					if is_closed a1 then Type.error [has_no_field a n];
-					if not (link (ref None) a f2.cf_type) then Type.error [cannot_unify a b];
+					if is_closed a1 then Typeunifyerror.error [has_no_field a n];
+					if not (link (ref None) a f2.cf_type) then Typeunifyerror.error [cannot_unify a b];
 					a1.a_fields <- PMap.add n f2 a1.a_fields
 				end;
 			) a2.a_fields;
 		with
-			Unify_error l -> Type.error (cannot_unify a b :: l))
+			Unify_error l -> Typeunifyerror.error (cannot_unify a b :: l))
 	| _ , _ ->
 		if b == t_dynamic && (param = EqRightDynamic || param = EqBothDynamic) then
 			()
 		else if a == t_dynamic && param = EqBothDynamic then
 			()
 		else
-			Type.error [cannot_unify a b]
+			Typeunifyerror.error [cannot_unify a b]
 
 let type_iseq gen a b =
 	try

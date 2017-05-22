@@ -20,8 +20,13 @@
 open Ast
 open Common.DisplayMode
 open Common
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
+open Typecoredef
 open Typecore
+open Errordef
 open Error
 open Globals
 
@@ -788,7 +793,7 @@ let get_constructor ctx c params p =
 		let ct = field_type ctx c params f p in
 		apply_params a.a_params params ct, f
 	| _ ->
-		let ct, f = (try Type.get_constructor (fun f -> field_type ctx c params f p) c with Not_found -> raise_error (No_constructor (TClassDecl c)) p) in
+		let ct, f = (try Typeutility.get_constructor (fun f -> field_type ctx c params f p) c with Not_found -> raise_error (No_constructor (TClassDecl c)) p) in
 		apply_params c.cl_params params ct, f
 
 let make_call ctx e params t p =
@@ -1431,11 +1436,11 @@ and type_field ?(resume=false) ctx e i p mode =
 			end;
 			let fmode, ft = (match !(a.a_status) with
 				| Statics c -> FStatic (c,f), field_type ctx c [] f p
-				| EnumStatics e -> FEnum (e,try PMap.find f.cf_name e.e_constrs with Not_found -> assert false), Type.field_type f
+				| EnumStatics e -> FEnum (e,try PMap.find f.cf_name e.e_constrs with Not_found -> assert false), Typeutility.field_type f
 				| _ ->
 					match f.cf_params with
 					| [] ->
-						FAnon f, Type.field_type f
+						FAnon f, Typeutility.field_type f
 					| l ->
 						(* handle possible constraints *)
 						let monos = List.map (fun _ -> mk_mono()) l in
@@ -1473,7 +1478,7 @@ and type_field ?(resume=false) ctx e i p mode =
 					cf_overloads = [];
 				} in
 				a.a_fields <- PMap.add i f a.a_fields;
-				field_access ctx mode f (FAnon f) (Type.field_type f) e p
+				field_access ctx mode f (FAnon f) (Typeutility.field_type f) e p
 		)
 	| TMono r ->
 		let f = {
@@ -1494,7 +1499,7 @@ and type_field ?(resume=false) ctx e i p mode =
 		let t = TAnon { a_fields = PMap.add i f PMap.empty; a_status = x } in
 		ctx.opened <- x :: ctx.opened;
 		r := Some t;
-		field_access ctx mode f (FAnon f) (Type.field_type f) e p
+		field_access ctx mode f (FAnon f) (Typeutility.field_type f) e p
 	| TAbstract (a,pl) ->
 		let static_abstract_access_through_instance = ref false in
 		(try
@@ -1663,7 +1668,7 @@ let unify_int ctx e k =
 		| TAnon a ->
 			(try is_dynamic (PMap.find f a.a_fields).cf_type with Not_found -> false)
 		| TInst (c,tl) ->
-			(try is_dynamic (apply_params c.cl_params tl ((let _,t,_ = Type.class_field c tl f in t))) with Not_found -> false)
+			(try is_dynamic (apply_params c.cl_params tl ((let _,t,_ = Typeutility.class_field c tl f in t))) with Not_found -> false)
 		| _ ->
 			true
 	in
@@ -3960,7 +3965,7 @@ and display_expr ctx e_ast e with_type p =
 			| [] -> acc
 			| (c,_) :: l ->
 				let acc = ref (loop acc l) in
-				let rec dup t = Type.map dup t in
+				let rec dup t = Typeutility.map dup t in
 				List.iter (fun f ->
 					if not (Meta.has Meta.NoUsing f.cf_meta) then
 					let f = { f with cf_type = opt_type f.cf_type } in
@@ -4296,7 +4301,7 @@ let get_main ctx types =
 		| TClassDecl c ->
 			try
 				let f = PMap.find "main" c.cl_statics in
-				let t = Type.field_type f in
+				let t = Typeutility.field_type f in
 				(match follow t with
 				| TFun ([],r) -> FStatic (c,f), t, r
 				| _ -> error ("Invalid -main : " ^ s_type_path cl ^ " has invalid main function") c.cl_pos);

@@ -18,10 +18,15 @@
  *)
 
 open Ast
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
 open Common
+open Typecoredef
 open Typecore
 open OptimizerTexpr
+open Errordef
 open Error
 open Globals
 

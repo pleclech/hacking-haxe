@@ -18,6 +18,9 @@
 *)
 open Common
 open Ast
+open Typedef
+open Typeutility
+
 open Type
 open Gencommon
 
@@ -453,7 +456,7 @@ let twhile_with_condition_statement com add_statement twhile cond e1 flag =
 		if flag = NormalWhile then
 			{ e1 with eexpr = TIf(cond, e1, Some({ e1 with eexpr = TBreak; etype = com.basic.tvoid })) }
 		else
-			Type.concat e1 { e1 with
+			Typeutility.concat e1 { e1 with
 				eexpr = TIf({
 					eexpr = TUnop(Not, Prefix, mk_paren cond);
 					etype = com.basic.tbool;

@@ -19,7 +19,10 @@
 
 open Ast
 open Globals
-open Type
+open Typedef
+open Typeutility
+
+
 open Nast
 open Common
 

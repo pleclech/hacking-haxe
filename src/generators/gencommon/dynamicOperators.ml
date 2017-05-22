@@ -18,7 +18,10 @@
 *)
 open Common
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Codegen
 open Gencommon
 

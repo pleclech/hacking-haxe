@@ -20,7 +20,10 @@ open Common
 open Ast
 open Codegen
 open Codegen.ExprBuilder
-open Type
+open Typedef
+open Typeutility
+
+
 open Gencommon
 
 let add_static c cf =

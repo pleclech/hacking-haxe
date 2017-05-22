@@ -17,7 +17,10 @@
 	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 *)
 open Common
-open Type
+open Typedef
+open Typeutility
+
+
 open Codegen
 open Codegen.ExprBuilder
 
@@ -130,7 +133,7 @@ let rec change_func com cl cf =
 						{ tf.tf_expr with eexpr = TBlock ((if !found then { super with eexpr = TCall (e1, args) } else super) :: !block @ tl) }
 					| _ -> assert false)
 				with Not_found ->
-					Type.concat { tf.tf_expr with eexpr = TBlock !block; etype = basic.tvoid } tf.tf_expr
+					Typeutility.concat { tf.tf_expr with eexpr = TBlock !block; etype = basic.tvoid } tf.tf_expr
 			in
 
 			args := List.map (fun (v,s) -> (v.v_name, (s <> None), v.v_type)) tf_args;

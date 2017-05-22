@@ -18,7 +18,10 @@
 *)
 open Option
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Gencommon
 
 (*
@@ -56,7 +59,7 @@ let priority = solve_deps name [DAfter DynamicOperators.priority]
 	change_expr (expr) (field_access_expr) (field) (setting expr) (is_unsafe) : changes the expression
 	call_expr (expr) (field_access_expr) (field) (call_params) : changes a call expression
 *)
-let configure gen (is_dynamic:texpr->texpr->Type.tfield_access->bool) (change_expr:texpr->texpr->string->texpr option->bool->texpr) (call_expr:texpr->texpr->string->texpr list->texpr) =
+let configure gen (is_dynamic:texpr->texpr->Typedef.tfield_access->bool) (change_expr:texpr->texpr->string->texpr option->bool->texpr) (call_expr:texpr->texpr->string->texpr list->texpr) =
 	let rec run e =
 		match e.eexpr with
 		(* class types *)

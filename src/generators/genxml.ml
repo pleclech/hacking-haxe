@@ -19,7 +19,10 @@
 
 open Globals
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Common
 open ExtString
 

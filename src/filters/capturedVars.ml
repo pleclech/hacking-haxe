@@ -17,6 +17,9 @@
 	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  *)
 open Globals
+open Typedef
+open Typeutility
+
 open Type
 open Common
 open LocalUsage
@@ -108,13 +111,13 @@ let captured_vars com e =
 			let vtmp = mk_var v used in
 			let it = wrap used it in
 			let expr = wrap used expr in
-			mk (TFor (vtmp,it,Type.concat (impl#mk_init v vtmp e.epos) expr)) e.etype e.epos
+			mk (TFor (vtmp,it,Typeutility.concat (impl#mk_init v vtmp e.epos) expr)) e.etype e.epos
 		| TTry (expr,catchs) ->
 			let catchs = List.map (fun (v,e) ->
 				let e = wrap used e in
 				try
 					let vtmp = mk_var v used in
-					vtmp, Type.concat (impl#mk_init v vtmp e.epos) e
+					vtmp, Typeutility.concat (impl#mk_init v vtmp e.epos) e
 				with Not_found ->
 					v, e
 			) catchs in
@@ -141,7 +144,7 @@ let captured_vars com e =
 			let fargs = List.map (fun (v,o) ->
 				if PMap.mem v.v_id used then
 					let vtmp = mk_var v used in
-					fexpr := Type.concat (impl#mk_init v vtmp e.epos) !fexpr;
+					fexpr := Typeutility.concat (impl#mk_init v vtmp e.epos) !fexpr;
 					vtmp, o
 				else
 					v, o

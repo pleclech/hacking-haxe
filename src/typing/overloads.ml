@@ -1,3 +1,6 @@
+open Typedef
+open Typeutility
+
 open Type
 
 let same_overload_args ?(get_vmtype) t1 t2 f1 f2 =
@@ -41,7 +44,7 @@ let same_overload_args ?(get_vmtype) t1 t2 f1 f2 =
 		| _ -> assert false
 
 
-(** retrieves all overloads from class c and field i, as (Type.t * tclass_field) list *)
+(** retrieves all overloads from class c and field i, as (Typedef.t * tclass_field) list *)
 let rec get_overloads c i =
 	let ret = try
 			let f = PMap.find i c.cl_fields in

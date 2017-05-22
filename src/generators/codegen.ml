@@ -18,8 +18,12 @@
  *)
 
 open Ast
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
 open Common
+
 open Error
 open Globals
 
@@ -571,10 +575,10 @@ module Dump = struct
 		buf,close
 
 	let dump_types com s_expr =
-		let s_type = s_type (Type.print_context()) in
+		let s_type = s_type (Typeutility.print_context()) in
 		let params tl = match tl with [] -> "" | l -> Printf.sprintf "<%s>" (String.concat "," (List.map (fun (n,t) -> n ^ " : " ^ s_type t) l)) in
 		List.iter (fun mt ->
-			let path = Type.t_path mt in
+			let path = Typeutility.t_path mt in
 			let buf,close = create_dumpfile_from_path com path in
 			let print fmt = Printf.kprintf (fun s -> Buffer.add_string buf s) fmt in
 			let s_metas ml tabs =
@@ -586,7 +590,7 @@ module Dump = struct
 				| [] -> ""
 				| ml -> String.concat " " (List.map (fun me -> match me with (m,el,_) -> "@" ^ Meta.to_string m ^ args el) ml) ^ "\n" ^ tabs in
 			(match mt with
-			| Type.TClassDecl c ->
+			| Typedef.TClassDecl c ->
 				let s_cf_expr f =
 					match f.cf_expr with
 					| None -> ""
@@ -646,7 +650,7 @@ module Dump = struct
 					print "%s" (s_expr s_type e);
 					print "\n");
 				print "}";
-			| Type.TEnumDecl e ->
+			| Typedef.TEnumDecl e ->
 				print "%s%s%senum %s%s {\n" (s_metas e.e_meta "") (if e.e_private then "private " else "") (if e.e_extern then "extern " else "") (s_type_path path) (params e.e_params);
 				List.iter (fun n ->
 					let f = PMap.find n e.e_constrs in
@@ -657,9 +661,9 @@ module Dump = struct
 						| _ -> "")
 				) e.e_names;
 				print "}"
-			| Type.TTypeDecl t ->
+			| Typedef.TTypeDecl t ->
 				print "%s%stypedef %s%s = %s" (s_metas t.t_meta "") (if t.t_private then "private " else "") (s_type_path path) (params t.t_params) (s_type t.t_type);
-			| Type.TAbstractDecl a ->
+			| Typedef.TAbstractDecl a ->
 				print "%s%sabstract %s%s%s%s {}" (s_metas a.a_meta "") (if a.a_private then "private " else "") (s_type_path path) (params a.a_params)
 				(String.concat " " (List.map (fun t -> " from " ^ s_type t) a.a_from))
 				(String.concat " " (List.map (fun t -> " to " ^ s_type t) a.a_to));
@@ -682,10 +686,10 @@ module Dump = struct
 
 	let dump_types com =
 		match Common.defined_value_safe com Define.Dump with
-			| "pretty" -> dump_types com (Type.s_expr_pretty false "\t" true)
-			| "legacy" -> dump_types com Type.s_expr
+			| "pretty" -> dump_types com (Typeutility.s_expr_pretty false "\t" true)
+			| "legacy" -> dump_types com Typeutility.s_expr
 			| "record" -> dump_record com
-			| _ -> dump_types com (Type.s_expr_ast (not (Common.defined com Define.DumpIgnoreVarIds)) "\t")
+			| _ -> dump_types com (Typeutility.s_expr_ast (not (Common.defined com Define.DumpIgnoreVarIds)) "\t")
 
 	let dump_dependencies ?(target_override=None) com =
 		let target_name = match target_override with
@@ -898,7 +902,7 @@ let for_remap com v e1 e2 p =
 	let enext = mk (TField(ev',quick_field t1 "next")) (tfun [] v.v_type) e1.epos in
 	let enext = mk (TCall(enext,[])) v.v_type e1.epos in
 	let eassign = mk (TVar(v,Some enext)) com.basic.tvoid p in
-	let ebody = Type.concat eassign e2 in
+	let ebody = Typeutility.concat eassign e2 in
 	mk (TBlock [
 		mk (TVar (v',Some e1)) com.basic.tvoid e1.epos;
 		mk (TWhile((mk (TParenthesis ehasnext) ehasnext.etype ehasnext.epos),ebody,NormalWhile)) com.basic.tvoid e1.epos;

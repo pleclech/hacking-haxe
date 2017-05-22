@@ -21,6 +21,9 @@ open Common
 open Globals
 open Codegen
 open Ast
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
 open Gencommon
 
@@ -763,7 +766,7 @@ struct
 			*)
 			let real_get_args = gen.gexpr_filters#run (mk (TBlock get_args) basic.tvoid pos) in
 
-			let func_expr = Type.concat real_get_args tf_expr in
+			let func_expr = Typeutility.concat real_get_args tf_expr in
 
 			(* set invoke function *)
 			(* todo properly abstract how naming for invoke is made *)

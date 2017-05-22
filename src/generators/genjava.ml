@@ -18,11 +18,14 @@
  *)
 
 open Globals
-open JData
-open Unix
+
+
 open Ast
 open Common
-open Type
+open Typedef
+open Typeutility
+
+
 open Codegen
 open Gencommon
 open Gencommon.SourceWriter
@@ -512,8 +515,8 @@ struct
 						Some conds, hashed_exprs
 					| _ -> assert false
 			) (None,[]) el in
-			let e = if has_default then Type.concat execute_def_set e else e in
-			let e = if !has_conflict then Type.concat e { e with eexpr = TBreak; etype = basic.tvoid } else e in
+			let e = if has_default then Typeutility.concat execute_def_set e else e in
+			let e = if !has_conflict then Typeutility.concat e { e with eexpr = TBreak; etype = basic.tvoid } else e in
 			let e = {
 				eexpr = TIf(get conds, e, None);
 				etype = basic.tvoid;
@@ -1090,7 +1093,7 @@ let generate con =
 				| TDynamic _ ->
 						path_s_import pos (["java";"lang"], "Object") []
 			(* No Lazy type nor Function type made. That's because function types will be at this point be converted into other types *)
-			| _ -> if !strict_mode then begin trace ("[ !TypeError " ^ (Type.s_type (Type.print_context()) t) ^ " ]"); assert false end else "[ !TypeError " ^ (Type.s_type (Type.print_context()) t) ^ " ]"
+			| _ -> if !strict_mode then begin trace ("[ !TypeError " ^ (Typeutility.s_type (Typeutility.print_context()) t) ^ " ]"); assert false end else "[ !TypeError " ^ (Typeutility.s_type (Typeutility.print_context()) t) ^ " ]"
 
 	and param_t_s pos t =
 		match run_follow gen t with
@@ -1733,7 +1736,7 @@ let generate con =
 		in
 		(match cf.cf_kind with
 			| Var _
-			| Method (MethDynamic) when not (Type.is_extern_field cf) ->
+			| Method (MethDynamic) when not (Typeutility.is_extern_field cf) ->
 				(if is_overload || List.exists (fun cf -> cf.cf_expr <> None) cf.cf_overloads then
 					gen.gcon.error "Only normal (non-dynamic) methods can be overloaded" cf.cf_pos);
 				if not is_interface then begin
@@ -1747,7 +1750,7 @@ let generate con =
 						| None -> write w ";"
 					)
 				end (* TODO see how (get,set) variable handle when they are interfaces *)
-			| Method _ when Type.is_extern_field cf || (match cl.cl_kind, cf.cf_expr with | KAbstractImpl _, None -> true | _ -> false) ->
+			| Method _ when Typeutility.is_extern_field cf || (match cl.cl_kind, cf.cf_expr with | KAbstractImpl _, None -> true | _ -> false) ->
 				List.iter (fun cf -> if cl.cl_interface || cf.cf_expr <> None then
 					gen_class_field w ~is_overload:true is_static cl (Meta.has Meta.Final cf.cf_meta) cf
 				) cf.cf_overloads

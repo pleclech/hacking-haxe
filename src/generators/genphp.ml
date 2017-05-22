@@ -18,7 +18,10 @@
  *)
 
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Common
 open Codegen
 
@@ -155,13 +158,13 @@ and type_string haxe_type =
 	type_string_suff "" haxe_type;;
 
 let debug_expression expression type_too =
-	"/* " ^ Type.s_expr_kind expression ^ (if (type_too) then " = " ^ (type_string (follow expression.etype)) else "") ^ " */";;
+	"/* " ^ Typeutility.s_expr_kind expression ^ (if (type_too) then " = " ^ (type_string (follow expression.etype)) else "") ^ " */";;
 
 let rec register_extern_required_path ctx path =
 	if (List.exists(fun p -> p = path) ctx.extern_classes_with_init) && not (List.exists(fun p -> p = path) ctx.extern_required_paths) then
 		ctx.extern_required_paths <- path :: ctx.extern_required_paths
 
-let s_expr_expr = Type.s_expr_kind
+let s_expr_expr = Typeutility.s_expr_kind
 
 let s_expr_name e =
 	s_type (print_context()) (follow e.etype)
@@ -521,7 +524,7 @@ let fun_block ctx f p =
 	let e = List.fold_left (fun e (v,c) ->
 		match c with
 		| None | Some TNull -> e
-		| Some c -> Type.concat (Codegen.set_default ctx.com v c p) e
+		| Some c -> Typeutility.concat (Codegen.set_default ctx.com v c p) e
 	) e f.tf_args in
 	if ctx.com.debug then begin
 		Codegen.stack_block ctx.stack ctx.curclass ctx.curmethod e

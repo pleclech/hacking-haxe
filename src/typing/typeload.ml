@@ -20,8 +20,13 @@
 open Ast
 open Common
 open Common.DisplayMode
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
+open Typecoredef
 open Typecore
+open Errordef
 open Error
 open Globals
 
@@ -3817,7 +3822,7 @@ let rec generic_substitute_type gctx t =
 		try
 			generic_substitute_type gctx (List.assq t gctx.subst)
 		with Not_found ->
-			Type.map (generic_substitute_type gctx) t
+			Typeutility.map (generic_substitute_type gctx) t
 
 let generic_substitute_expr gctx e =
 	let vars = Hashtbl.create 0 in

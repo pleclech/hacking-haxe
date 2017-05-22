@@ -19,7 +19,10 @@
 open Globals
 open Common
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Codegen
 open Codegen.ExprBuilder
 
@@ -98,7 +101,7 @@ let init com (should_wrap:t->bool) (wrap_throw:texpr->texpr) (unwrap_expr:texpr-
 					| [] ->
 						match catchall with
 						| Some (v,s) ->
-							Type.concat (mk (TVar (v, Some catchall_local)) com.basic.tvoid pos) s
+							Typeutility.concat (mk (TVar (v, Some catchall_local)) com.basic.tvoid pos) s
 						| None ->
 							mk_block (rethrow_expr temp_local)
 				in
@@ -144,7 +147,7 @@ let configure_cs com =
 		let e_exc = make_static_this exc_cl e.epos in
 		let e_field = Codegen.field e_exc "exception" base_exception_t e.epos in
 		let e_setstack = binop OpAssign e_field (make_local v e.epos) v.v_type e.epos in
-		Type.concat e_setstack e
+		Typeutility.concat e_setstack e
 	in
 	let std_cl = find_class com ([],"Std") in
 	let gen_typecheck e t pos =
@@ -176,7 +179,7 @@ let configure_java com =
 	let catch_map v e =
 		let exc = make_static_this exc_cl e.epos in
 		let e_setstack = fcall exc "setException" [make_local v e.epos] com.basic.tvoid e.epos in
-		Type.concat e_setstack e;
+		Typeutility.concat e_setstack e;
 	in
 	let std_cl = find_class com ([],"Std") in
 	let gen_typecheck e t pos =

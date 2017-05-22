@@ -1,9 +1,13 @@
 open Globals
 open Common
 open Common.DisplayMode
-open Type
+open Typedef
+open Typeutility
+
+
 open Display
-open Typecore
+open Typecoredef
+
 
 (* Old XML stuff *)
 

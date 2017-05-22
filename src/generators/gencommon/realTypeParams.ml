@@ -19,6 +19,9 @@
 open Option
 open Common
 open Ast
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
 open Codegen
 open Gencommon

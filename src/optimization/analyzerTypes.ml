@@ -19,7 +19,10 @@
 
 open Globals
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Common
 
 (*
@@ -64,7 +67,7 @@ module BasicBlock = struct
 
 	and syntax_edge =
 		| SEIfThen of t * t * pos                                (* `if` with "then" and "next" *)
-		| SEIfThenElse of t * t * t * Type.t * pos               (* `if` with "then", "else" and "next" *)
+		| SEIfThenElse of t * t * t * Typedef.t * pos               (* `if` with "then", "else" and "next" *)
 		| SESwitch of (texpr list * t) list * t option * t * pos (* `switch` with cases, "default" and "next" *)
 		| SETry of t * t * (tvar * t) list * t *  pos            (* `try` with "exc", catches and "next" *)
 		| SEWhile of t * t * t                                   (* `while` with "head", "body" and "next" *)
@@ -75,7 +78,7 @@ module BasicBlock = struct
 
 	and t = {
 		bb_id : int;                          (* The unique ID of the block *)
-		bb_type : Type.t;                     (* The block type *)
+		bb_type : Typedef.t;                     (* The block type *)
 		bb_pos : pos;                         (* The block position *)
 		bb_kind : block_kind;                 (* The block kind *)
 		mutable bb_closed : bool;             (* Whether or not the block has been closed *)
@@ -171,7 +174,7 @@ module Graph = struct
 	open BasicBlock
 
 	type texpr_lookup = BasicBlock.t * bool * int
-	type tfunc_info = BasicBlock.t * Type.t * pos * tfunc
+	type tfunc_info = BasicBlock.t * Typedef.t * pos * tfunc
 	type var_write = BasicBlock.t list
 	type 'a itbl = (int,'a) Hashtbl.t
 

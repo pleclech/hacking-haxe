@@ -45,7 +45,10 @@
 open Printf
 open Common
 open Common.DisplayMode
-open Type
+
+open Typeutility
+
+
 open Server
 open Globals
 
@@ -286,7 +289,7 @@ module Initialize = struct
 end
 
 let generate tctx ext xml_out interp swf_header =
-	let com = tctx.Typecore.com in
+	let com = tctx.Typecoredef.com in
 	(* check file extension. In case of wrong commandline, we don't want
 		to accidentaly delete a source file. *)
 	if file_extension com.file = ext then delete_file com.file;
@@ -294,9 +297,9 @@ let generate tctx ext xml_out interp swf_header =
 	if Common.defined com Define.Dump then Codegen.Dump.dump_types com;
 	if Common.defined com Define.DumpDependencies then begin
 		Codegen.Dump.dump_dependencies com;
-		if not tctx.Typecore.in_macro then match tctx.Typecore.g.Typecore.macros with
+		if not tctx.Typecoredef.in_macro then match tctx.Typecoredef.g.Typecoredef.macros with
 			| None -> ()
-			| Some(_,ctx) -> print_endline "generate"; Codegen.Dump.dump_dependencies ~target_override:(Some "macro") ctx.Typecore.com
+			| Some(_,ctx) -> print_endline "generate"; Codegen.Dump.dump_dependencies ~target_override:(Some "macro") ctx.Typecoredef.com
 	end;
 	begin match com.platform with
 		| Neko | Hl | Eval when interp -> ()
@@ -784,11 +787,11 @@ try
 		Common.log com ("Classpath : " ^ (String.concat ";" com.class_path));
 		Common.log com ("Defines : " ^ (String.concat ";" (PMap.foldi (fun k v acc -> (match v with "1" -> k | _ -> k ^ "=" ^ v) :: acc) com.defines [])));
 		let t = Common.timer ["typing"] in
-		Typecore.type_expr_ref := (fun ctx e with_type -> Typer.type_expr ctx e with_type);
+		Typecoredef.type_expr_ref := (fun ctx e with_type -> Typer.type_expr ctx e with_type);
 		let tctx = Typer.create com in
 		List.iter (MacroContext.call_init_macro tctx) (List.rev !config_macros);
 		List.iter (Typer.eval tctx) !evals;
-		List.iter (fun cpath -> ignore(tctx.Typecore.g.Typecore.do_load_module tctx cpath null_pos)) (List.rev !classes);
+		List.iter (fun cpath -> ignore(tctx.Typecoredef.g.Typecoredef.do_load_module tctx cpath null_pos)) (List.rev !classes);
 		Typer.finalize tctx;
 		t();
 		if not ctx.com.display.dms_display && ctx.has_error then raise Abort;
@@ -828,7 +831,7 @@ try
 with
 	| Abort ->
 		()
-	| Error.Fatal_error (m,p) ->
+	| Errordef.Fatal_error (m,p) ->
 		error ctx m p
 	| Common.Abort (m,p) ->
 		error ctx m p
@@ -836,7 +839,7 @@ with
 		error ctx (Lexer.error_msg m) p
 	| Parser.Error (m,p) ->
 		error ctx (Parser.error_msg m) p
-	| Typecore.Forbid_package ((pack,m,p),pl,pf)  ->
+	| Typecoredef.Forbid_package ((pack,m,p),pl,pf)  ->
 		if !Common.display_default <> DMNone && ctx.has_next then begin
 			ctx.has_error <- false;
 			ctx.messages <- [];
@@ -844,7 +847,7 @@ with
 			error ctx (Printf.sprintf "You cannot access the %s package while %s (for %s)" pack (if pf = "macro" then "in a macro" else "targeting " ^ pf) (s_type_path m) ) p;
 			List.iter (error ctx "    referenced here") (List.rev pl);
 		end
-	| Error.Error (m,p) ->
+	| Errordef.Error (m,p) ->
 		error ctx (Error.error_msg m) p
 	| Interp.Error (msg,p :: l) | Hlmacro.Error (msg,p :: l) ->
 		message ctx msg p;

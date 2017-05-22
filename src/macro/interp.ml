@@ -17,11 +17,14 @@
 	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  *)
 
-open Globals
+
 open Common
 open Nast
 open Unix
-open Type
+open Typedef
+open Typeutility
+
+
 open MacroApi
 
 (* ---------------------------------------------------------------------- *)
@@ -61,7 +64,7 @@ and vabstract =
 	| ASocket of Unix.file_descr
 	| ATDecl of module_type
 	| AUnsafe of Obj.t
-	| ALazyType of ((unit -> Type.t) ref) * (unit -> value)
+	| ALazyType of ((unit -> Typedef.t) ref) * (unit -> value)
 	| ANekoAbstract of Extc.value
 	| ANekoBuffer of value
 	| ACacheRef of value
@@ -104,7 +107,7 @@ type callstack = {
 
 type context = {
 	gen : Genneko.context;
-	types : (Type.path,int) Hashtbl.t;
+	types : (Typedef.path,int) Hashtbl.t;
 	prototypes : (string list, vobject) Hashtbl.t;
 	fields_cache : (int,string) Hashtbl.t;
 	mutable error : bool;
@@ -414,7 +417,7 @@ let catch_errors ctx ?(final=(fun() -> ())) f =
 			(match get_field o (hash "message"), get_field o (hash "pos") with
 			| VObject msg, VAbstract (APos pos) ->
 				(match get_field msg h_s with
-				| VString msg -> raise (Error.Error (Error.Custom msg,pos))
+				| VString msg -> raise (Errordef.Error (Errordef.Custom msg,pos))
 				| _ -> ());
 			| _ -> ());
 		| _ -> ());
@@ -1405,7 +1408,7 @@ let std_lib =
 			VInt (((get_ctx()).curapi.get_com()).run_command (vstring cmd))
 		);
 		"sys_exit", Fun1 (fun code ->
-			if (get_ctx()).curapi.use_cache() then raise (Error.Fatal_error ("",Globals.null_pos));
+			if (get_ctx()).curapi.use_cache() then raise (Errordef.Fatal_error ("",Globals.null_pos));
 			raise (Sys_exit(vint code));
 		);
 		"sys_exists", Fun1 (fun file ->
@@ -2703,7 +2706,7 @@ let do_reuse ctx api =
 
 let can_reuse ctx types =
 	let has_old_version t =
-		let inf = Type.t_infos t in
+		let inf = Typeutility.t_infos t in
 		try
 			Hashtbl.find ctx.types inf.mt_path <> inf.mt_module.m_id
 		with Not_found ->
@@ -2718,9 +2721,9 @@ let add_types ctx types ready =
 			   to have the same path. Let's skip all abstracts so this doesn't matter. *)
 			false
 		| _ ->
-			let path = Type.t_path t in
+			let path = Typeutility.t_path t in
 			if Hashtbl.mem ctx.types path then false else begin
-				Hashtbl.add ctx.types path (Type.t_infos t).mt_module.m_id;
+				Hashtbl.add ctx.types path (Typeutility.t_infos t).mt_module.m_id;
 				true;
 			end
 	) types in

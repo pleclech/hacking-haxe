@@ -21,6 +21,9 @@
  *)
 
 open Ast
+open Typedef
+open Typeutility
+
 open Type
 open Common
 open ExtList
@@ -56,10 +59,10 @@ type object_store = {
 
 
 let debug_expression expression  =
-    " --[[ " ^ Type.s_expr_kind expression  ^ " --]] "
+    " --[[ " ^ Typeutility.s_expr_kind expression  ^ " --]] "
 
 let debug_type t  =
-    " --[[ " ^ Type.s_type_kind t  ^ " --]] ";;
+    " --[[ " ^ Typeutility.s_type_kind t  ^ " --]] ";;
 
 let get_exposed ctx path meta = try
 		let (_, args, pos) = Meta.get Meta.Expose meta in
@@ -181,7 +184,7 @@ let fun_block ctx f p =
 	let e = List.fold_left (fun e (a,c) ->
 		match c with
 		| None | Some TNull -> e
-		| Some c -> Type.concat (Codegen.set_default ctx.com a c p) e
+		| Some c -> Typeutility.concat (Codegen.set_default ctx.com a c p) e
 	) f.tf_expr f.tf_args in
 	e
 

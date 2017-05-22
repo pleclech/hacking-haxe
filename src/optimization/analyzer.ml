@@ -18,7 +18,10 @@
  *)
 
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Common
 open AnalyzerTexpr
 open AnalyzerTypes
@@ -981,14 +984,14 @@ module Run = struct
 
 	let run_on_field ctx config c cf = match cf.cf_expr with
 		| Some e when not (is_ignored cf.cf_meta) && not (Typecore.is_removable_field ctx cf) ->
-			let config = update_config_from_meta ctx.Typecore.com config cf.cf_meta in
+			let config = update_config_from_meta ctx.Typecoredef.com config cf.cf_meta in
 			(match e.eexpr with TFunction tf -> cf.cf_expr_unoptimized <- Some tf | _ -> ());
-			let actx = create_analyzer_context ctx.Typecore.com config e in
+			let actx = create_analyzer_context ctx.Typecoredef.com config e in
 			let debug() =
 				print_endline (Printf.sprintf "While analyzing %s.%s" (s_type_path c.cl_path) cf.cf_name);
 				List.iter (fun (s,e) ->
 					print_endline (Printf.sprintf "<%s>" s);
-					print_endline (Type.s_expr_pretty true "" false (s_type (print_context())) e);
+					print_endline (Typeutility.s_expr_pretty true "" false (s_type (print_context())) e);
 					print_endline (Printf.sprintf "</%s>" s);
 				) (List.rev actx.debug_exprs);
 				Debug.dot_debug actx c cf;
@@ -997,7 +1000,7 @@ module Run = struct
 			let e = try
 				run_on_expr actx e
 			with
-			| Error.Error _ | Abort _ as exc ->
+			| Errordef.Error _ | Abort _ as exc ->
 				raise exc
 			| exc ->
 				debug();
@@ -1013,7 +1016,7 @@ module Run = struct
 		| _ -> ()
 
 	let run_on_class ctx config c =
-		let config = update_config_from_meta ctx.Typecore.com config c.cl_meta in
+		let config = update_config_from_meta ctx.Typecoredef.com config c.cl_meta in
 		let process_field stat cf = match cf.cf_kind with
 			| Var _ when not stat -> ()
 			| _ -> run_on_field ctx config c cf
@@ -1030,7 +1033,7 @@ module Run = struct
 			| Some e ->
 				let tf = { tf_args = []; tf_type = e.etype; tf_expr = e; } in
 				let e = mk (TFunction tf) (tfun [] e.etype) e.epos in
-				let actx = create_analyzer_context ctx.Typecore.com {config with optimize = false} e in
+				let actx = create_analyzer_context ctx.Typecoredef.com {config with optimize = false} e in
 				let e = run_on_expr actx e in
 				let e = match e.eexpr with
 					| TFunction tf -> tf.tf_expr
@@ -1048,7 +1051,7 @@ module Run = struct
 		| TAbstractDecl _ -> ()
 
 	let run_on_types ctx types =
-		let com = ctx.Typecore.com in
+		let com = ctx.Typecoredef.com in
 		let config = get_base_config com in
 		with_timer config.detail_times ["other"] (fun () ->
 			let cfl = if config.optimize && config.purity_inference then with_timer config.detail_times ["optimize";"purity-inference"] (fun () -> Purity.infer com) else [] in
@@ -1057,7 +1060,7 @@ module Run = struct
 		)
 end
 ;;
-Typecore.analyzer_run_on_expr_ref := (fun com e ->
+Typecoredef.analyzer_run_on_expr_ref := (fun com e ->
 	let config = AnalyzerConfig.get_base_config com in
 	(* We always want to optimize because const propagation might be required to obtain
 	   a constant expression for inline field initializations (see issue #4977). *)

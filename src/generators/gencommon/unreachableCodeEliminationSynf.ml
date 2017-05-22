@@ -18,6 +18,9 @@
 *)
 open Common
 open Ast
+open Typedef
+open Typeutility
+
 open Type
 open Gencommon
 
@@ -91,7 +94,7 @@ let init com java_mode =
 	let handle_case = fun (expr,kind) ->
 		match kind with
 		| Normal when has_fallback expr -> expr
-		| Normal -> Type.concat expr (mk_sbreak expr.epos)
+		| Normal -> Typeutility.concat expr (mk_sbreak expr.epos)
 		| BreaksLoop | BreaksFunction -> expr
 	in
 
@@ -130,7 +133,7 @@ let init com java_mode =
 			| TFunction tf ->
 				let changed, kind = process_expr tf.tf_expr in
 				let changed = if not (ExtType.is_void tf.tf_type) && kind <> BreaksFunction then
-					Type.concat changed (Codegen.mk_return (null tf.tf_type expr.epos))
+					Typeutility.concat changed (Codegen.mk_return (null tf.tf_type expr.epos))
 				else
 					changed
 				in

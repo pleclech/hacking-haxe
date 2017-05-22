@@ -19,6 +19,9 @@
 
 open Ast
 open Common
+open Typedef
+open Typeutility
+
 open Type
 open Globals
 
@@ -178,7 +181,7 @@ and mark_t dce p t =
 		| TAbstract(a,pl) when Meta.has Meta.MultiType a.a_meta ->
 			begin try
 				mark_t dce p (snd (Typecore.AbstractCast.find_multitype_specialization dce.com a pl p))
-			with Error.Error _ ->
+			with Errordef.Error _ ->
 				()
 			end
 		| TAbstract(a,pl) ->
@@ -320,7 +323,7 @@ and mark_directly_used_t com p t =
 	| TAbstract(a,pl) when Meta.has Meta.MultiType a.a_meta ->
 		begin try (* this is copy-pasted from mark_t *)
 			mark_directly_used_t com p (snd (Typecore.AbstractCast.find_multitype_specialization com a pl p))
-		with Error.Error _ ->
+		with Errordef.Error _ ->
 			()
 		end
 	| TAbstract(a,pl) ->

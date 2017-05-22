@@ -19,8 +19,12 @@
 
 open Globals
 open Ast
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
 open Common
+
 open Error
 
 exception Internal_match_failure
@@ -102,7 +106,8 @@ module Constructor = struct
 		| ConArray i1,ConArray i2 -> i1 - i2
 		| _ -> -1 (* Could assert... *)
 
-	open Typecore
+	open Typecoredef
+
 
 	let to_texpr ctx match_debug p con = match con with
 		| ConEnum(en,ef) ->
@@ -121,7 +126,8 @@ module Constructor = struct
 end
 
 module Pattern = struct
-	open Typecore
+	open Typecoredef
+open Typecore
 	open Constructor
 
 	type t =
@@ -435,7 +441,8 @@ module Pattern = struct
 end
 
 module Case = struct
-	open Typecore
+	open Typecoredef
+open Typecore
 
 	type t = {
 		case_guard : texpr option;
@@ -526,7 +533,7 @@ module Decision_tree = struct
 
 	let s_case_expr tabs case = match case.case_expr with
 		| None -> ""
-		| Some e -> Type.s_expr_pretty false tabs false s_type e
+		| Some e -> Typeutility.s_expr_pretty false tabs false s_type e
 
 	let rec to_string tabs dt = match dt.dt_t with
 		| Leaf case ->
@@ -537,7 +544,7 @@ module Decision_tree = struct
 			in
 			let s_cases = String.concat "" (List.map s_case cases) in
 			let s_default = to_string (tabs ^ "\t") dt in
-			Printf.sprintf "switch (%s) {%s\n%s\tdefault: %s\n%s}" (Type.s_expr_pretty false tabs false s_type e) s_cases tabs s_default tabs
+			Printf.sprintf "switch (%s) {%s\n%s\tdefault: %s\n%s}" (Typeutility.s_expr_pretty false tabs false s_type e) s_cases tabs s_default tabs
 		| Bind(bl,dt) ->
 			(String.concat "" (List.map (fun (v,_,e) -> if v.v_name = "_" then "" else Printf.sprintf "%s<%i> = %s; " v.v_name v.v_id (s_expr_pretty e)) bl)) ^
 			to_string tabs dt
@@ -768,7 +775,8 @@ end
 module DtTable = Hashtbl.Make(Decision_tree)
 
 module Compile = struct
-	open Typecore
+	open Typecoredef
+open Typecore
 	open Decision_tree
 	open Case
 	open Constructor
@@ -896,8 +904,8 @@ module Compile = struct
 	let s_case (case,bindings,patterns) =
 		let s_bindings = String.concat ", " (List.map (fun (v,_,e) -> Printf.sprintf "%s<%i> = %s" v.v_name v.v_id (s_expr_pretty e)) bindings) in
 		let s_patterns = String.concat " " (List.map Pattern.to_string patterns) in
-		let s_expr = match case.case_expr with None -> "" | Some e -> Type.s_expr_pretty false "\t\t" false s_type e in
-		let s_guard = match case.case_guard with None -> "" | Some e -> Type.s_expr_pretty false "\t\t" false s_type e in
+		let s_expr = match case.case_expr with None -> "" | Some e -> Typeutility.s_expr_pretty false "\t\t" false s_type e in
+		let s_guard = match case.case_guard with None -> "" | Some e -> Typeutility.s_expr_pretty false "\t\t" false s_type e in
 		Printf.sprintf "\n\t\tbindings: %s\n\t\tpatterns: %s\n\t\tguard: %s\n\t\texpr: %s" s_bindings s_patterns s_guard s_expr
 
 	let s_cases cases =
@@ -1085,7 +1093,8 @@ module Compile = struct
 end
 
 module TexprConverter = struct
-	open Typecore
+	open Typecoredef
+
 	open Decision_tree
 	open Constructor
 	open Case
@@ -1128,7 +1137,7 @@ module TexprConverter = struct
 			) params in
 			let rec duplicate_monos t = match follow t with
 				| TMono _ -> mk_mono()
-				| _ -> Type.map duplicate_monos t
+				| _ -> Typeutility.map duplicate_monos t
 			in
 			let t_e = apply_params ctx.type_params monos (duplicate_monos t) in
 			begin try
@@ -1373,7 +1382,8 @@ module TexprConverter = struct
 end
 
 module Match = struct
-	open Typecore
+	open Typecoredef
+open Typecore
 
 	let match_expr ctx e cases def with_type p =
 		let match_debug = Meta.has (Meta.Custom ":matchDebug") ctx.curfield.cf_meta in
@@ -1439,4 +1449,4 @@ module Match = struct
 		{e with epos = p}
 end
 ;;
-Typecore.match_expr_ref := Match.match_expr
+Typecoredef.match_expr_ref := Match.match_expr

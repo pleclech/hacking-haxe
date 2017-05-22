@@ -1,5 +1,9 @@
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
+
 open Error
 open Globals
 

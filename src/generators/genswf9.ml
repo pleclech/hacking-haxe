@@ -19,7 +19,10 @@
 
 open Globals
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open As3
 open As3hl
 open Common
@@ -102,7 +105,7 @@ type context = {
 	mutable for_call : bool;
 }
 
-let rec follow t = match Type.follow t with
+let rec follow t = match Typeutility.follow t with
 	| TAbstract(a,tl) when not (Meta.has Meta.CoreType a.a_meta) ->
 		follow (Abstract.get_underlying_type a tl)
 	| t ->

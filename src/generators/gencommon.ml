@@ -53,8 +53,11 @@
 		where module_gen will take a whole module (can be *)
 *)
 open Unix
-open Ast
-open Type
+
+open Typedef
+open Typeutility
+
+
 open Common
 open Globals
 open Option
@@ -116,7 +119,7 @@ let follow_once t =
 
 let t_empty = TAnon({ a_fields = PMap.empty; a_status = ref Closed })
 
-let alloc_var n t = Type.alloc_var n t null_pos
+let alloc_var n t = Typeutility.alloc_var n t null_pos
 
 let mk_local = ExprBuilder.make_local
 
@@ -176,7 +179,7 @@ let get_fun t =
 	| TFun (args, ret) -> args, ret
 	| t -> (trace (debug_type t)); assert false
 
-let mk_cast t e = Type.mk_cast e t e.epos
+let mk_cast t e = Typeutility.mk_cast e t e.epos
 
 (** TODO: when adding new AST, make a new cast type for those fast casts. For now, we're using this hack
  *        of using null_class to tell a fast cast from a normal one. Also note that this only works since both
@@ -416,7 +419,7 @@ type generator_ctx =
 
 	gtypes : (path, module_type) Hashtbl.t;
 	mutable gtypes_list : module_type list;
-	mutable gmodules : Type.module_def list;
+	mutable gmodules : Typedef.module_def list;
 
 	(* cast detection helpers / settings *)
 	(* this is a cache for all field access types *)
@@ -507,8 +510,8 @@ and gen_classes =
 	cl_dyn : tclass;
 
 	mutable nativearray_len : texpr -> pos -> texpr;
-	mutable nativearray_type : Type.t -> Type.t;
-	mutable nativearray : Type.t -> Type.t;
+	mutable nativearray_type : Typedef.t -> Typedef.t;
+	mutable nativearray : Typedef.t -> Typedef.t;
 }
 
 (* add here all reflection transformation additions *)
@@ -1096,7 +1099,7 @@ let get_cl_t t =
 	match follow t with | TInst (cl,_) -> cl | _ -> assert false
 
 let mk_class m path pos =
-	let cl = Type.mk_class m path pos null_pos in
+	let cl = Typeutility.mk_class m path pos null_pos in
 	cl.cl_meta <- [ Meta.CompilerGenerated, [], null_pos ];
 	cl
 

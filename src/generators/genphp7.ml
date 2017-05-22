@@ -3,9 +3,12 @@
 *)
 
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Common
-open Meta
+
 open Globals
 open Sourcemaps
 
@@ -255,12 +258,12 @@ let error_and_exit pos message =
 (**
 	Check if `target` is a `Dynamic` type
 *)
-let rec is_dynamic_type (target:Type.t) = match follow target with TDynamic _ -> true | _ -> false
+let rec is_dynamic_type (target:Typedef.t) = match follow target with TDynamic _ -> true | _ -> false
 
 (**
 	Check if `target` is `php.Ref`
 *)
-let is_ref (target:Type.t) = match target with TType ({ t_path = type_path }, _) -> type_path = ref_type_path | _ -> false
+let is_ref (target:Typedef.t) = match target with TType ({ t_path = type_path }, _) -> type_path = ref_type_path | _ -> false
 
 (**
 	Check if `field` is a `dynamic function`
@@ -306,7 +309,7 @@ let is_lang_extern expr =
 (**
 	Check if specified type is actually a generic parameter
 *)
-let is_generic_parameter (target:Type.t) =
+let is_generic_parameter (target:Typedef.t) =
 	match follow target with
 		| TInst ({ cl_kind = KTypeParameter _ }, _) -> true
 		| _ -> false
@@ -314,13 +317,13 @@ let is_generic_parameter (target:Type.t) =
 (**
 	Check if `target` type cannot be clarified on compilation
 *)
-let is_unknown_type (target:Type.t) = is_dynamic_type target || is_generic_parameter target
+let is_unknown_type (target:Typedef.t) = is_dynamic_type target || is_generic_parameter target
 
 (**
-	@return `Type.t` instance for `Void`
+	@return `Typedef.t` instance for `Void`
 *)
 let void = ref None
-let get_void ctx : Type.t =
+let get_void ctx : Typedef.t =
 	match !void with
 		| Some value -> value
 		| None ->
@@ -406,7 +409,7 @@ let needs_dereferencing for_assignment expr =
 (**
 	@return (arguments_list, return_type)
 *)
-let get_function_signature (field:tclass_field) : (string * bool * Type.t) list * Type.t =
+let get_function_signature (field:tclass_field) : (string * bool * Typedef.t) list * Typedef.t =
 	match follow field.cf_type with
 		| TFun (args, return_type) -> (args, return_type)
 		| _ -> fail field.cf_pos __POS__
@@ -415,7 +418,7 @@ let get_function_signature (field:tclass_field) : (string * bool * Type.t) list 
 	Check if `target` is 100% guaranteed to be a scalar type in PHP.
 	Inversion of `is_sure_scalar` does not guarantee `target` is not scalar.
 *)
-let is_sure_scalar (target:Type.t) =
+let is_sure_scalar (target:Typedef.t) =
 	match follow target with
 		| TInst ({ cl_path = ([], "String") }, _) -> true
 		| TAbstract (abstr, _) ->
@@ -484,7 +487,7 @@ let is_enum_constructor_with_args (constructor:tenum_field) =
 	Check if `target` is 100% guaranteed to be or extend an extern class.
 	Inversion of `sure_extends_extern` does not guarantee `target` does not extend an extern class.
 *)
-let rec sure_extends_extern (target:Type.t) =
+let rec sure_extends_extern (target:Typedef.t) =
 	match follow target with
 		| TInst ({ cl_path = ([], "String") }, _) -> false
 		| TInst ({ cl_extern = true }, _) -> true
@@ -537,7 +540,7 @@ let get_full_type_name ?escape ?omit_first_slash (type_path:path) =
 (**
 	Check if `target` is or implements native PHP `Throwable` interface
 *)
-let rec is_native_exception (target:Type.t) =
+let rec is_native_exception (target:Typedef.t) =
 	match follow target with
 		| TInst ({ cl_path = path }, _) when path = native_exception_path -> true
 		| TInst ({ cl_super = parent ; cl_implements = interfaces ; cl_path = path }, _) ->
@@ -854,7 +857,7 @@ class virtual type_wrapper (type_path:path) (meta:metadata) (needs_generation:bo
 		*)
 		method virtual get_source_file : string
 		(**
-			Returns `Type.module_type` instance for this type
+			Returns `Typedef.module_type` instance for this type
 		*)
 		method virtual get_module_type : module_type
 		(**
@@ -922,7 +925,7 @@ class class_wrapper (cls) =
 		*)
 		method get_source_file = cls.cl_pos.pfile
 		(**
-			Returns `Type.module_type` instance for this type
+			Returns `Typedef.module_type` instance for this type
 		*)
 		method get_module_type = TClassDecl cls
 		(**
@@ -969,7 +972,7 @@ class enum_wrapper (enm) =
 		*)
 		method get_source_file = enm.e_pos.pfile
 		(**
-			Returns `Type.module_type` instance for this type
+			Returns `Typedef.module_type` instance for this type
 		*)
 		method get_module_type = TEnumDecl enm
 	end
@@ -989,7 +992,7 @@ class typedef_wrapper (tdef) =
 		*)
 		method get_source_file = tdef.t_pos.pfile
 		(**
-			Returns `Type.module_type` instance for this type
+			Returns `Typedef.module_type` instance for this type
 		*)
 		method get_module_type = TTypeDecl tdef
 	end
@@ -1009,7 +1012,7 @@ class abstract_wrapper (abstr) =
 		*)
 		method get_source_file = abstr.a_pos.pfile
 		(**
-			Returns `Type.module_type` instance for this type
+			Returns `Typedef.module_type` instance for this type
 		*)
 		method get_module_type = TAbstractDecl abstr
 	end
@@ -1332,10 +1335,10 @@ class code_writer (ctx:Common.context) hx_type_path php_name =
 						done;
 						!alias
 		(**
-			Extracts type path from Type.t value and execute self#use on it
+			Extracts type path from Typedef.t value and execute self#use on it
 			@return Unique alias for specified type.
 		*)
-		method use_t (t_inst:Type.t) =
+		method use_t (t_inst:Typedef.t) =
 			match follow t_inst with
 				| TEnum (tenum, _) -> self#use tenum.e_path
 				| TInst (tcls, _) ->
@@ -2743,7 +2746,7 @@ class code_writer (ctx:Common.context) hx_type_path php_name =
 		(**
 			Writes argument for function declarations or calls
 		*)
-		method write_arg with_optionals (arg_name, optional, (arg_type:Type.t)) =
+		method write_arg with_optionals (arg_name, optional, (arg_type:Typedef.t)) =
 			self#write ("$" ^ arg_name ^ (if with_optionals && optional then " = null" else ""))
 		(**
 			Writes argument with optional value for function declarations

@@ -1,7 +1,11 @@
 open Ast
 open Common
 open Common.DisplayMode
+open Typedef
+open Typeutility
+
 open Type
+open Typecoredef
 open Typecore
 open Globals
 
@@ -392,7 +396,7 @@ module Diagnostics = struct
 			| DKRemovableCode -> 3
 	end
 
-	open DiagnosticsKind
+
 	open DisplayTypes
 
 	let add_removable_code com s p prange =

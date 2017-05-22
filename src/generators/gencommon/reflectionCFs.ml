@@ -19,7 +19,10 @@
 open Option
 open Common
 open Ast
-open Type
+open Typedef
+open Typeutility
+
+
 open Codegen
 open Gencommon
 open ClosuresToClass
@@ -1037,7 +1040,7 @@ let implement_get_set ctx cl =
 							mk_this_call_raw ("set_" ^ cf.cf_name) (TFun(["value",false,cf.cf_type], cf.cf_type)) [ value_local ];
 							mk_return value_local
 						] in
-						if Type.is_extern_field cf then
+						if Typeutility.is_extern_field cf then
 							{ eexpr = TBlock bl; etype = value_local.etype; epos = pos }
 						else
 							{
@@ -1084,7 +1087,7 @@ let implement_get_set ctx cl =
 
 			let get_field cf cf_type ethis cl name =
 				match cf.cf_kind with
-					| Var { v_read = AccCall } when Type.is_extern_field cf ->
+					| Var { v_read = AccCall } when Typeutility.is_extern_field cf ->
 						mk_this_call_raw ("get_" ^ cf.cf_name) (TFun(["value",false,cf.cf_type], cf.cf_type)) []
 					| Var { v_read = AccCall } ->
 						{
@@ -1147,7 +1150,7 @@ let implement_get_set ctx cl =
 			let fields = List.filter (fun (_, cf) -> match is_set, cf.cf_kind with
 				| true, Var { v_write = AccCall } -> true
 				| false, Var { v_read = AccCall } -> true
-				| _ -> not (Type.is_extern_field cf)) fields
+				| _ -> not (Typeutility.is_extern_field cf)) fields
 			in
 			(if fields <> [] then has_fields := true);
 			let cases = List.map (fun (names, cf) ->

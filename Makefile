@@ -17,7 +17,7 @@ INSTALL_STD_DIR=$(INSTALL_LIB_DIR)/std
 PACKAGE_OUT_DIR=out
 PACKAGE_SRC_EXTENSION=.tar.gz
 
-MAKEFILENAME?=Makefile
+MAKEFILENAME?=Makefile.split
 PLATFORM?=unix
 
 OUTPUT=haxe
@@ -27,7 +27,7 @@ STATICLINK?=0
 
 # Configuration
 
-HAXE_DIRECTORIES=compiler context generators generators/gencommon macro filters optimization syntax typing display
+HAXE_DIRECTORIES=compiler context generators generators/gencommon macro filters optimization syntax typing display 
 EXTLIB_LIBS=extlib-leftovers extc neko javalib swflib ttflib ilib objsize pcre
 FINDLIB_LIBS=unix str threads sedlex camlzip xml-light extlib rope ptmap
 
@@ -38,7 +38,7 @@ EXTLIB_INCLUDES=$(EXTLIB_LIBS:%=-I libs/%)
 ALL_INCLUDES=$(EXTLIB_INCLUDES) $(HAXE_INCLUDES)
 FINDLIB_PACKAGES=$(FINDLIB_LIBS:%=-package %)
 CFLAGS=
-ALL_CFLAGS=-bin-annot -safe-string -thread -g -w -3 $(CFLAGS) $(ALL_INCLUDES) $(FINDLIB_PACKAGES)
+ALL_CFLAGS=-bin-annot -safe-string -thread -g -w -3 -w +33 $(CFLAGS) $(ALL_INCLUDES) $(FINDLIB_PACKAGES)
 
 ifeq ($(BYTECODE),1)
 	TARGET_FLAG = bytecode
@@ -46,11 +46,13 @@ ifeq ($(BYTECODE),1)
 	LIB_EXT = cma
 	MODULE_EXT = cmo
 	NATIVE_LIB_FLAG = -custom
+	OCAMLDEP_FLAG =
 else
 	TARGET_FLAG = native
 	COMPILER = ocamlfind ocamlopt
 	LIB_EXT = cmxa
 	MODULE_EXT = cmx
+	OCAMLDEP_FLAG = -native
 endif
 
 CC_CMD = $(COMPILER) $(ALL_CFLAGS) -c $<
@@ -101,31 +103,24 @@ libs:
 
 copy_output_files:
 	mkdir -p _build
-	$(foreach dir,$(HAXE_DIRECTORIES:%=src/%),mkdir -p _build/$(dir) && rsync -u $(dir)/*.ml _build/$(dir) &&) true
 	sh compile.sh $(ADD_REVISION)
+	$(foreach dir,$(HAXE_DIRECTORIES:%=src/%),mkdir -p _build/$(dir) && (sh rsync.sh $(dir)) &&) true
 ifneq ($(ADD_REVISION),0)
 	$(MAKE) -f Makefile.version_extra -s --no-print-directory ADD_REVISION=$(ADD_REVISION) BRANCH=$(BRANCH) COMMIT_SHA=$(COMMIT_SHA) COMMIT_DATE=$(COMMIT_DATE) > _build/src/compiler/version.ml
 endif
 
-haxe: copy_output_files
-	$(MAKE) -f $(MAKEFILENAME) build_pass_1
-	$(MAKE) -f $(MAKEFILENAME) build_pass_2
-	$(MAKE) -f $(MAKEFILENAME) build_pass_3
-	$(MAKE) -f $(MAKEFILENAME) build_pass_4
+_build/.mkdepends: copy_output_files
 
-build_pass_1:
-	printf MODULES= > Makefile.modules
-	ls -1 $(HAXE_DIRECTORIES:%=_build/src/%/*.ml) | tr '\n' ' ' >> Makefile.modules
+Makefile.modules: _build/.mkdepends
+	$(eval MODULES= $(shell ls -1 $(HAXE_DIRECTORIES:%=_build/src/%/*.ml) | tr '\n' ' '))
+	$(eval MODULES= $(shell ocamldep -sort -slash $(INCLUDES) $(MODULES) | sed -e "s/\.ml//g"))
+	echo MODULES=$(MODULES) > $@
 
-build_pass_2:
-	printf MODULES= > Makefile.modules
-	ocamlfind ocamldep -sort -slash $(HAXE_INCLUDES) $(MODULES) | sed -e "s/\.ml//g" >> Makefile.modules
+Makefile.dependencies: Makefile.modules
+	ocamlfind ocamldep -slash $(OCAMLDEP_FLAG) $(HAXE_INCLUDES) $(MODULES:%=%.ml) > $@
 
-build_pass_3:
-	ocamlfind ocamldep -slash -native $(HAXE_INCLUDES) $(MODULES:%=%.ml) > Makefile.dependencies
-
-build_pass_4: $(MODULES:%=%.$(MODULE_EXT))
-	$(COMPILER) -safe-string -linkpkg -o $(OUTPUT) $(NATIVE_LIBS) $(NATIVE_LIB_FLAG) $(LFLAGS) $(FINDLIB_PACKAGES) $(EXTLIB_INCLUDES) $(EXTLIB_LIBS:=.$(LIB_EXT)) $(MODULES:%=%.$(MODULE_EXT))
+haxe: Makefile.dependencies $(MODULES:%=%.$(MODULE_EXT))
+	$(COMPILER) -linkpkg -o $(OUTPUT) $(NATIVE_LIBS) $(NATIVE_LIB_FLAG) $(LFLAGS) $(FINDLIB_PACKAGES) $(EXTLIB_INCLUDES) $(EXTLIB_LIBS:=.$(LIB_EXT)) $(MODULES:%=%.$(MODULE_EXT))
 
 haxelib:
 	(cd $(CURDIR)/extra/haxelib_src && $(CURDIR)/$(OUTPUT) client.hxml && nekotools boot run.n)
@@ -162,7 +157,7 @@ uninstall:
 
 # Dependencies
 
--include Makefile.dependencies
+include Makefile.dependencies
 
 # Package
 
@@ -228,4 +223,4 @@ clean_package:
 .ml.cmo:
 	$(CC_CMD)
 
-.PHONY: haxe libs haxelib
+.PHONY: copy_output_files libs haxelib

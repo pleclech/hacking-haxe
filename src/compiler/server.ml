@@ -1,9 +1,12 @@
-open Printf
+
 open Globals
-open Ast
+
 open Common
 open Common.DisplayMode
-open Type
+open Typedef
+open Typeutility
+
+
 open DisplayOutput
 open Json
 
@@ -288,9 +291,9 @@ let rec wait_loop process_params verbose accept =
 	let stat dir =
 		(Unix.stat (Path.remove_trailing_slash dir)).Unix.st_mtime
 	in
-	let get_changed_directories (ctx : Typecore.typer) =
+	let get_changed_directories (ctx : Typecoredef.typer) =
 		let t = Common.timer ["server";"module cache";"changed dirs"] in
-		let com = ctx.Typecore.com in
+		let com = ctx.Typecoredef.com in
 		let sign = get_signature com in
 		let dirs = try
 			(* First, check if we already have determined changed directories for current compilation. *)
@@ -354,9 +357,9 @@ let rec wait_loop process_params verbose accept =
 	let compilation_step = ref 0 in
 	let compilation_mark = ref 0 in
 	let mark_loop = ref 0 in
-	Typeload.type_module_hook := (fun (ctx:Typecore.typer) mpath p ->
+	Typeload.type_module_hook := (fun (ctx:Typecoredef.typer) mpath p ->
 		let t = Common.timer ["server";"module cache"] in
-		let com2 = ctx.Typecore.com in
+		let com2 = ctx.Typecoredef.com in
 		let sign = get_signature com2 in
 		let content_changed m file =
 			let ffile = Path.unique_full_path file in
@@ -400,10 +403,10 @@ let rec wait_loop process_params verbose accept =
 					in
 					loop com2.load_extern_type
 				| MCode -> check_module_shadowing com2 directories m
-				| MMacro when ctx.Typecore.in_macro -> check_module_shadowing com2 directories m
+				| MMacro when ctx.Typecoredef.in_macro -> check_module_shadowing com2 directories m
 				| MMacro ->
 					let _, mctx = MacroContext.get_macro_context ctx p in
-					check_module_shadowing mctx.Typecore.com (get_changed_directories mctx) m
+					check_module_shadowing mctx.Typecoredef.com (get_changed_directories mctx) m
 			in
 			let has_policy policy = List.mem policy m.m_extra.m_check_policy in
 			let check_file () =
@@ -473,7 +476,7 @@ let rec wait_loop process_params verbose accept =
 					) m.m_types;
 					if m.m_extra.m_kind <> MSub then Typeload.add_module ctx m p;
 					PMap.iter (Hashtbl.replace com2.resources) m.m_extra.m_binded_res;
-					if ctx.Typecore.in_macro || com2.display.dms_full_typing then
+					if ctx.Typecoredef.in_macro || com2.display.dms_full_typing then
 						PMap.iter (fun _ m2 -> add_modules (tabs ^ "  ") m0 m2) m.m_extra.m_deps;
 					List.iter (MacroContext.call_init_macro ctx) m.m_extra.m_macro_calls
 				)

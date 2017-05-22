@@ -16,9 +16,12 @@
 	along with this program; if not, write to the Free Software
 	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  *)
-open Globals
-open Type
-open Ast
+
+open Typedef
+
+
+
+
 open Hlcode
 open Hlinterp
 open MacroApi
@@ -29,7 +32,7 @@ type context = {
 	com : Common.context; (* macro one *)
 	mutable gen : Genhl.context option;
 	interp : Hlinterp.context;
-	types : (Type.path,int) Hashtbl.t;
+	types : (Typedef.path,int) Hashtbl.t;
 	cached_protos : (obj_type, (virtual_proto * vfield array)) Hashtbl.t;
 	cached_enums : (enum_type, ttype) Hashtbl.t;
 	mutable curapi : value MacroApi.compiler_api;
@@ -106,9 +109,9 @@ let add_types ctx types ready =
 			   to have the same path. Let's skip all abstracts so this doesn't matter. *)
 			false
 		| _ ->
-			let path = Type.t_path t in
+			let path = Typeutility.t_path t in
 			if Hashtbl.mem ctx.types path then false else begin
-				Hashtbl.add ctx.types path (Type.t_infos t).mt_module.m_id;
+				Hashtbl.add ctx.types path (Typeutility.t_infos t).mt_module.m_id;
 				true;
 			end
 	) types in
@@ -136,7 +139,7 @@ let do_reuse ctx api =
 
 let can_reuse ctx types =
 	let has_old_version t =
-		let inf = Type.t_infos t in
+		let inf = Typeutility.t_infos t in
 		try
 			Hashtbl.find ctx.types inf.mt_path <> inf.mt_module.m_id
 		with Not_found ->

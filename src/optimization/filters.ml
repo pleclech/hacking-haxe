@@ -19,8 +19,13 @@
 
 open Ast
 open Common
+open Typedef
+open Typeutility
+open Typeunifyerror
 open Type
+open Typecoredef
 open Typecore
+
 open Error
 open Globals
 

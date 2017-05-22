@@ -18,6 +18,9 @@
  *)
 
 open Ast
+open Typedef
+open Typeutility
+
 open Type
 open Common
 open OptimizerTexpr
@@ -181,7 +184,7 @@ let type_change_ok com t1 t2 =
 	else begin
 		let rec map t = match t with
 			| TMono r -> (match !r with None -> t_dynamic | Some t -> map t)
-			| _ -> Type.map map t
+			| _ -> Typeutility.map map t
 		in
 		let t1 = map t1 in
 		let t2 = map t2 in
@@ -275,7 +278,7 @@ module TexprFilter = struct
 			in
 			let e2 = if flag = NormalWhile then e2 else map_continue e2 in
 			let e_if = e_if None in
-			let e_block = if flag = NormalWhile then Type.concat e_if e2 else Type.concat e2 e_if in
+			let e_block = if flag = NormalWhile then Typeutility.concat e_if e2 else Typeutility.concat e2 e_if in
 			let e_true = mk (TConst (TBool true)) com.basic.tbool p in
 			let e = mk (TWhile(Codegen.mk_parent e_true,e_block,NormalWhile)) e.etype p in
 			loop e
@@ -438,7 +441,7 @@ module InterferenceReport = struct
 		let s_hashtbl f h =
 			String.concat ", " (Hashtbl.fold (fun k _ acc -> (f k) :: acc) h [])
 		in
-		Type.Printer.s_record_fields "\t" [
+		Typeutility.Printer.s_record_fields "\t" [
 			"ir_var_reads",s_hashtbl string_of_int ir.ir_var_reads;
 			"ir_var_writes",s_hashtbl string_of_int ir.ir_var_writes;
 			"ir_field_reads",s_hashtbl (fun x -> x) ir.ir_field_reads;
@@ -664,7 +667,7 @@ module Fusion = struct
 				let blocked = ref false in
 				let ir = InterferenceReport.from_texpr e1 in
 				if config.fusion_debug then print_endline (Printf.sprintf "\tInterferenceReport: %s\n\t%s"
-					 (InterferenceReport.to_string ir) (Type.s_expr_pretty true "\t" false (s_type (print_context())) (mk (TBlock el) t_dynamic null_pos)));
+					 (InterferenceReport.to_string ir) (Typeutility.s_expr_pretty true "\t" false (s_type (print_context())) (mk (TBlock el) t_dynamic null_pos)));
 				(* This function walks the AST in order of evaluation and tries to find an occurrence of v1. If successful, that occurrence is
 				   replaced with e1. If there's an interference "on the way" the replacement is canceled. *)
 				let rec replace e =

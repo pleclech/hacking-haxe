@@ -18,6 +18,9 @@
 *)
 open Option
 open Common
+open Typedef
+open Typeutility
+
 open Type
 open Gencommon
 
