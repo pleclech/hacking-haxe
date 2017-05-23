@@ -682,7 +682,7 @@ and load_complex_type ctx allow_display p (t,pn) =
 			TFun ([],load_complex_type ctx allow_display p r)
 		| _ ->
 			TFun (List.map (fun t ->
-				let t, opt = (match fst t with CTOptional t -> t, true | _ -> t,false) in
+				let t, opt = (match fst t with CTOptional (Some t) -> t, true | _ -> t,false) in
 				"",opt,load_complex_type ctx allow_display p t
 			) args,load_complex_type ctx allow_display p r)
 
