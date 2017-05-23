@@ -34,6 +34,7 @@ exception Build_canceled of build_state
 
 let locate_macro_error = ref true
 let build_count = ref 0
+let type_module_with_decls_ref:(Typecoredef.typer -> Typedef.path -> string -> type_decl list -> pos -> Typedef.module_def) ref = ref (fun _ _ _ _ _ -> assert false)
 
 let transform_abstract_field com this_t a_t a f =
 	let stat = List.mem AStatic f.cff_access in
@@ -317,7 +318,8 @@ let apply_macro ctx mode path el p =
 (*
 	load a type or a subtype definition
 *)
-let rec load_type_def ctx p t =
+let load_type_def ctx p t =
+let rec load_type_def' ctx p t =
 	let no_pack = t.tpackage = [] in
 	let tname = (match t.tsub with None -> t.tname | Some n -> n) in
 	if tname = "" then raise (Display.DisplayToplevel (Display.ToplevelCollector.run ctx true));
@@ -358,7 +360,7 @@ let rec load_type_def ctx p t =
 					| [] -> raise Exit
 					| (wp,pi) :: l ->
 						try
-							let t = load_type_def ctx p { t with tpackage = wp } in
+							let t = load_type_def' ctx p { t with tpackage = wp } in
 							Display.ImportHandling.mark_import_position ctx.com pi;
 							t
 						with
@@ -372,7 +374,7 @@ let rec load_type_def ctx p t =
 				| [] -> raise Exit
 				| (_ :: lnext) as l ->
 					try
-						load_type_def ctx p { t with tpackage = List.rev l }
+						load_type_def' ctx p { t with tpackage = List.rev l }
 					with
 						| Error (Module_not_found _,p2)
 						| Error (Type_not_found _,p2) when p == p2 -> loop lnext
@@ -393,6 +395,20 @@ let rec load_type_def ctx p t =
 				loop (List.rev (fst ctx.m.curmod.m_path));
 			with
 				Exit -> next()
+in
+try
+	load_type_def' ctx p t
+with Error (Module_not_found _,p2) as e ->
+	let error() = raise e in
+	ignore(Onthefly.create_type ctx t.tname error !type_module_with_decls_ref);
+	let t,m = t, ctx.g.do_load_module ctx (t.tpackage,t.tname) p in
+	let tname = (match t.tsub with None -> t.tname | Some n -> n) in
+	let tpath = (t.tpackage,t.tname) in
+	try
+		List.find (fun t ->  not (t_infos t).mt_private && t_path t = tpath) m.m_types
+	with
+		Not_found -> raise (Error (Type_not_found (m.m_path,tname),p))
+
 
 let resolve_position_by_path ctx path p =
 	let mt = load_type_def ctx p path in
@@ -4229,3 +4245,6 @@ let on_inherit ctx c p (is_extends,tp) =
 		true
 	| _ ->
 		true
+;;
+
+type_module_with_decls_ref := (fun ctx m file tdecls p -> type_module ctx m file tdecls p);
