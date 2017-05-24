@@ -195,6 +195,10 @@ let rec type_eq param a b =
 		(match !t with
 		| None -> if param = EqCoreType || not (link t b a) then error [cannot_unify a b]
 		| Some t -> type_eq param a t)
+	| TAbstract(a1, [a]), TAbstract(a2, [b]) when Higherkind.is_in a1.a_meta && Higherkind.is_in a2.a_meta ->
+		(try type_eq param a b with Unify_error _ -> ())
+	| TAbstract(a1, [a]), _ when Higherkind.is_in a1.a_meta -> ()
+	| _, TAbstract(a2, [b]) when Higherkind.is_in a2.a_meta -> ()
 	| TType (t1,tl1), TType (t2,tl2) when (t1 == t2 || (param = EqCoreType && t1.t_path = t2.t_path)) && List.length tl1 = List.length tl2 ->
 		List.iter2 (type_eq param) tl1 tl2
 	| TType (t,tl) , _ when can_follow a ->
@@ -314,6 +318,21 @@ let rec unify a b =
 		(match !t with
 		| None -> if not (link t b a) then error [cannot_unify a b]
 		| Some t -> unify a t)
+	| TAbstract(a1, [a]), TAbstract(a2, [b]) when Higherkind.is_in a1.a_meta && Higherkind.is_in a2.a_meta ->
+		(try unify a b with Unify_error _ -> ())
+	| TAbstract(a1, [a]), _ when Higherkind.is_in a1.a_meta ->
+		(try unify a b with Unify_error _ -> ())
+	| _, TAbstract(a2, [b]) when Higherkind.is_in a2.a_meta ->
+		(try unify a b with Unify_error _ -> ())
+	| TAbstract(a1, tl1), TAbstract(a2, tl2) when Higherkind.is_hkt a1.a_meta && Higherkind.is_hkt a2.a_meta ->
+		let c1,ctl1 = Higherkind.fill_with_abstract a1 tl1 in
+		let c2,ctl2 = Higherkind.fill_with_abstract a2 tl2 in
+		unify c1 c2;
+		List.iter2 (fun t1 t2 -> unify t1 t2) ctl1 ctl2;
+	| TAbstract(a1, tl1), _ when Higherkind.is_hkt a1.a_meta ->
+		(try let b = Higherkind.mk_with_abstract2 a1 tl1 b in unify a b with Not_found -> error [cannot_unify a b])
+	| _, TAbstract(a2, tl2) when Higherkind.is_hkt a2.a_meta ->
+		(try let a = Higherkind.mk_with_abstract2 a2 tl2 a in unify a b with Not_found -> error [cannot_unify a b])
 	| TType (t1,tl1), TType (t2,tl2) when t1 == t2 ->
 		if not (List.exists (fun (a2,b2) -> fast_eq a a2 && fast_eq b b2) (!unify_stack)) then begin
 			try

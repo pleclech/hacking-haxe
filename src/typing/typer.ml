@@ -1476,6 +1476,7 @@ and type_field ?(resume=false) ctx e i p mode =
 					cf_expr_unoptimized = None;
 					cf_params = [];
 					cf_overloads = [];
+					cf_override = None;
 				} in
 				a.a_fields <- PMap.add i f a.a_fields;
 				field_access ctx mode f (FAnon f) (Typeutility.field_type f) e p
@@ -1494,6 +1495,7 @@ and type_field ?(resume=false) ctx e i p mode =
 			cf_expr_unoptimized = None;
 			cf_params = [];
 			cf_overloads = [];
+			cf_override = None;
 		} in
 		let x = ref Opened in
 		let t = TAnon { a_fields = PMap.add i f PMap.empty; a_status = x } in
@@ -4570,6 +4572,35 @@ let rec create com =
 		| [TClassDecl c2 ] -> ctx.g.global_using <- (c1,c1.cl_pos) :: (c2,c2.cl_pos) :: ctx.g.global_using
 		| _ -> assert false);
 	| _ -> assert false);
+	let m = Typeload.load_module ctx ([], Higherkind.name) null_pos in
+	(match m.m_types with
+	| TAbstractDecl a::_ ->
+		Higherkind.t_ref :=  Some a
+	| _ -> assert false
+	);
+	(*
+	let m = Typeload.load_module ctx ([], Higherkind.In.name) null_pos in
+	(match m.m_types with
+	| TTypeDecl def::_ ->
+		Higherkind.In.t_ref := Some def
+	| _ -> assert false
+	);
+	*)
+	let m = Typeload.load_module ctx ([], Higherkind.In.mk_name 1) null_pos in
+	(match m.m_types with
+	| TAbstractDecl a::_ -> Higherkind.In.t2_ref := Some a 
+	| _ -> assert false
+	);
+	let m = Typeload.load_module ctx ([], Higherkind.InList.name) null_pos in
+	(match m.m_types with
+	| TAbstractDecl a::_ -> Higherkind.InList.t_ref := Some a 
+	| _ -> assert false
+	);
+	let m = Typeload.load_module ctx ([], Higherkind.InList.mk_name 1) null_pos in
+	(match m.m_types with
+	| TAbstractDecl a::_ -> Higherkind.InList.t2_ref := Some a 
+	| _ -> assert false
+	);
 	ctx
 
 ;;

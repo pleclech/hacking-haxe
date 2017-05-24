@@ -168,6 +168,7 @@ and tclass_field = {
 	mutable cf_expr : texpr option;
 	mutable cf_expr_unoptimized : tfunc option;
 	mutable cf_overloads : tclass_field list;
+	mutable cf_override : tclass_field option;
 }
 
 and tclass_kind =

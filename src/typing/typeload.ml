@@ -457,8 +457,11 @@ let rec load_instance ?(allow_display=false) ctx (t,pn) allow_no_params p =
 	let t = try
 		if t.tpackage <> [] || t.tsub <> None then raise Not_found;
 		let pt = List.assoc t.tname ctx.type_params in
-		if t.tparams <> [] then error ("Class type parameter " ^ t.tname ^ " can't have parameters") p;
-		pt
+		if t.tparams <> [] then
+			let t = Higherkind.mk_from_tparam t p in
+			load_instance ctx t allow_no_params (snd t)
+		else
+			pt
 	with Not_found ->
 		let mt = load_type_def ctx p t in
 		let is_generic,is_generic_build = match mt with
@@ -558,6 +561,7 @@ and load_complex_type ctx allow_display p (t,pn) =
 	match t with
 	| CTParent t -> load_complex_type ctx allow_display p t
 	| CTPath t -> load_instance ~allow_display ctx (t,pn) false p
+	| CTOptional None -> mk_mono()
 	| CTOptional _ -> error "Optional type not allowed here" p
 	| CTExtend (tl,l) ->
 		(match load_complex_type ctx allow_display p (CTAnonymous l,p) with
@@ -683,6 +687,7 @@ and load_complex_type ctx allow_display p (t,pn) =
 				cf_doc = f.cff_doc;
 				cf_meta = f.cff_meta;
 				cf_overloads = [];
+				cf_override = None;
 			} in
 			init_meta_overloads ctx None cf;
 			if ctx.is_display_file then begin
@@ -1381,7 +1386,8 @@ module Inheritance = struct
 				else if not (unify_kind f2.cf_kind f.cf_kind) || not (match f.cf_kind, f2.cf_kind with Var _ , Var _ -> true | Method m1, Method m2 -> mkind m1 = mkind m2 | _ -> false) then
 					display_error ctx ("Field " ^ i ^ " has different property access than in " ^ s_type_path intf.cl_path ^ " (" ^ s_kind f2.cf_kind ^ " should be " ^ s_kind f.cf_kind ^ ")") p
 				else try
-					valid_redefinition ctx f2 t2 f (apply_params intf.cl_params params f.cf_type)
+					valid_redefinition ctx f2 t2 f (apply_params intf.cl_params params f.cf_type);
+					f2.cf_override <- Some f 
 				with
 					Unify_error l ->
 						if not (Meta.has Meta.CsNative c.cl_meta && c.cl_extern) then begin
@@ -2319,6 +2325,7 @@ module ClassInitializer = struct
 			cf_public = is_public (ctx,cctx) f.cff_access None;
 			cf_params = [];
 			cf_overloads = [];
+			cf_override = None;
 		} in
 		ctx.curfield <- cf;
 		bind_var (ctx,cctx,fctx) cf eo;
@@ -2544,6 +2551,7 @@ module ClassInitializer = struct
 			cf_public = is_public (ctx,cctx) f.cff_access parent;
 			cf_params = params;
 			cf_overloads = [];
+			cf_override = None;
 		} in
 		cf.cf_meta <- List.map (fun (m,el,p) -> match m,el with
 			| Meta.AstSource,[] -> (m,(match fd.f_expr with None -> [] | Some e -> [e]),p)
@@ -2730,6 +2738,7 @@ module ClassInitializer = struct
 			cf_public = is_public (ctx,cctx) f.cff_access None;
 			cf_params = [];
 			cf_overloads = [];
+			cf_override = None;
 		} in
 		ctx.curfield <- cf;
 		bind_var (ctx,cctx,fctx) cf eo;
@@ -3292,6 +3301,7 @@ let init_module_type ctx context_init do_init (decl,p) =
 				cf_expr_unoptimized = None;
 				cf_params = f.ef_params;
 				cf_overloads = [];
+				cf_override = None;
 			} in
  			if ctx.is_display_file && Display.is_display_position p then
  				Display.DisplayEmitter.display_enum_field ctx.com.display f p;
@@ -4121,6 +4131,7 @@ let extend_xml_proxy ctx c t file p =
 						cf_expr = None;
 						cf_expr_unoptimized = None;
 						cf_overloads = [];
+						cf_override = None;
 					} in
 					c.cl_fields <- PMap.add id f c.cl_fields;
 				with

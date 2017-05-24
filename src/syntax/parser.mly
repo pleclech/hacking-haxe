@@ -931,7 +931,7 @@ and parse_complex_type_inner = parser
 	| [< '(Question,p1); t,p2 = parse_complex_type_inner >] ->
 		CTOptional (Some (t,p2)),punion p1 p2
 	| [< t,p = parse_type_path >] ->
-		if t.tname="_" && t.tpackage=[] then CTOptional None,p
+		if t.tname="_" && t.tpackage=[] then CTPath {t with tname="In1";tparams=[ TPType(CTOptional None, p) ]}, p			
 		else CTPath t,p
 
 and parse_type_path s = parse_type_path1 None [] s

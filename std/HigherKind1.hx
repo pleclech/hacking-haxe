@@ -1,0 +1,1 @@
+@:HigherKind @:forward abstract HigherKind1<C,I,T1>(C) to C {}

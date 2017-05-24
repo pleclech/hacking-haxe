@@ -1726,6 +1726,7 @@ let generate con =
 	in
 
 	let rec gen_class_field w ?(is_overload=false) is_static cl is_final cf =
+		Higherkind.erase_type_for_class_field cf;
 		let is_interface = cl.cl_interface in
 		let name, is_new, is_explicit_iface = match cf.cf_name with
 			| "new" -> snd cl.cl_path, true, false

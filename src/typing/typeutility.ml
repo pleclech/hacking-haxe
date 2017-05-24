@@ -150,6 +150,7 @@ let mk_field name t p name_pos = {
 	cf_expr_unoptimized = None;
 	cf_params = [];
 	cf_overloads = [];
+	cf_override = None;
 }
 
 let null_module = {

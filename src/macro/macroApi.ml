@@ -1274,6 +1274,7 @@ let decode_cfield v =
 		cf_expr = None;
 		cf_expr_unoptimized = None;
 		cf_overloads = decode_ref (field v "overloads");
+		cf_override = None;
 	}
 
 let decode_efield v =

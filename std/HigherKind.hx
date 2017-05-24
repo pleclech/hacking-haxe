@@ -1,0 +1,1 @@
+@:coreType @:HigherKind abstract HigherKind {}

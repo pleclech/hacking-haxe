@@ -3308,6 +3308,7 @@ class class_builder ctx (cls:tclass) =
 							};
 							cf_expr_unoptimized = None;
 							cf_overloads = [];
+							cf_override = None;
 						}
 		(**
 			Writes type body to output buffer.
