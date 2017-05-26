@@ -304,7 +304,7 @@ let print_stacks() =
 	print_endline "abstract_cast_stack";
 	List.iter (fun (a,b) -> Printf.printf "\t%s , %s\n" (st a) (st b)) !abstract_cast_stack
 
-let rec unify a b =
+let rec unify ?(ignoreInError=false) a b =
 	if a == b then
 		()
 	else match a, b with
@@ -319,16 +319,18 @@ let rec unify a b =
 		| None -> if not (link t b a) then error [cannot_unify a b]
 		| Some t -> unify a t)
 	| TAbstract(a1, [a]), TAbstract(a2, [b]) when Higherkind.is_in a1.a_meta && Higherkind.is_in a2.a_meta ->
-		(try unify a b with Unify_error _ -> ())
+		(try unify a b with Unify_error _ as e -> if not ignoreInError then raise e else ())
 	| TAbstract(a1, [a]), _ when Higherkind.is_in a1.a_meta ->
-		(try unify a b with Unify_error _ -> ())
+		(try unify a b with Unify_error _ as e -> if not ignoreInError then raise e else ())
 	| _, TAbstract(a2, [b]) when Higherkind.is_in a2.a_meta ->
-		(try unify a b with Unify_error _ -> ())
+		(try unify a b with Unify_error _ as e -> if not ignoreInError then raise e else ())
 	| TAbstract(a1, tl1), TAbstract(a2, tl2) when Higherkind.is_hkt a1.a_meta && Higherkind.is_hkt a2.a_meta ->
-		let c1,ctl1 = Higherkind.fill_with_abstract a1 tl1 in
-		let c2,ctl2 = Higherkind.fill_with_abstract a2 tl2 in
+		let c1,cins1,ctl1 = Higherkind.fill_with_abstract a1 tl1 in
+		let c2,cins2,ctl2 = Higherkind.fill_with_abstract a2 tl2 in
 		unify c1 c2;
-		List.iter2 (fun t1 t2 -> unify t1 t2) ctl1 ctl2;
+		List.iter2 (fun t1 t2 -> unify ~ignoreInError:true t1 t2) ctl1 ctl2;
+		Higherkind.erase_in cins1;
+		Higherkind.erase_in cins2
 	| TAbstract(a1, tl1), _ when Higherkind.is_hkt a1.a_meta ->
 		(try let b = Higherkind.mk_with_abstract2 a1 tl1 b in unify a b with Not_found -> error [cannot_unify a b])
 	| _, TAbstract(a2, tl2) when Higherkind.is_hkt a2.a_meta ->
@@ -651,7 +653,7 @@ and unify_from ab tl a b ?(allow_transitive_cast=true) t =
 	if (List.exists (fun (a2,b2) -> fast_eq a a2 && fast_eq b b2) (!abstract_cast_stack)) then false else begin
 	abstract_cast_stack := (a,b) :: !abstract_cast_stack;
 	let t = apply_params ab.a_params tl t in
-	let unify_func = if allow_transitive_cast then unify else type_eq EqStrict in
+	let unify_func = if allow_transitive_cast then (unify ~ignoreInError:false) else type_eq EqStrict in
 	let b = try
 		unify_func a t;
 		true
@@ -664,7 +666,7 @@ and unify_from ab tl a b ?(allow_transitive_cast=true) t =
 
 and unify_to ab tl b ?(allow_transitive_cast=true) t =
 	let t = apply_params ab.a_params tl t in
-	let unify_func = if allow_transitive_cast then unify else type_eq EqStrict in
+	let unify_func = if allow_transitive_cast then (unify ~ignoreInError:false) else type_eq EqStrict in
 	try
 		unify_func t b;
 		true
@@ -674,7 +676,7 @@ and unify_to ab tl b ?(allow_transitive_cast=true) t =
 and unify_from_field ab tl a b ?(allow_transitive_cast=true) (t,cf) =
 	if (List.exists (fun (a2,b2) -> fast_eq a a2 && fast_eq b b2) (!abstract_cast_stack)) then false else begin
 	abstract_cast_stack := (a,b) :: !abstract_cast_stack;
-	let unify_func = if allow_transitive_cast then unify else type_eq EqStrict in
+	let unify_func = if allow_transitive_cast then (unify ~ignoreInError:false) else type_eq EqStrict in
 	let b = try
 		begin match follow cf.cf_type with
 			| TFun(_,r) ->
@@ -700,7 +702,7 @@ and unify_to_field ab tl b ?(allow_transitive_cast=true) (t,cf) =
 	let a = TAbstract(ab,tl) in
 	if (List.exists (fun (b2,a2) -> fast_eq a a2 && fast_eq b b2) (!abstract_cast_stack)) then false else begin
 	abstract_cast_stack := (b,a) :: !abstract_cast_stack;
-	let unify_func = if allow_transitive_cast then unify else type_eq EqStrict in
+	let unify_func = if allow_transitive_cast then (unify ~ignoreInError:false) else type_eq EqStrict in
 	let r = try
 		begin match follow cf.cf_type with
 			| TFun((_,_,ta) :: _,_) ->

@@ -2005,7 +2005,9 @@ let rec type_binop ctx op e1 e2 is_assign_op with_type p =
 		type_binop2 ctx op e1 e2 is_assign_op wt p
 
 and type_binop2 ctx op (e1 : texpr) (e2 : Ast.expr) is_assign_op wt p =
+	let e1 = Higherkind.In.retype_expr e1 in
 	let e2 = type_expr ctx e2 (if op == OpEq || op == OpNotEq then WithType e1.etype else wt) in
+	let e2 = Higherkind.In.retype_expr e2 in
 	let tint = ctx.t.tint in
 	let tfloat = ctx.t.tfloat in
 	let tstring = ctx.t.tstring in
@@ -2697,6 +2699,7 @@ and type_vars ctx vl p =
 				| None -> None
 				| Some e ->
 					let e = type_expr ctx e (WithType t) in
+					let e = Higherkind.retype_expr e in
 					let e = AbstractCast.cast_or_unify ctx t e p in
 					Some e
 			) in
@@ -4578,14 +4581,12 @@ let rec create com =
 		Higherkind.t_ref :=  Some a
 	| _ -> assert false
 	);
-	(*
-	let m = Typeload.load_module ctx ([], Higherkind.In.name) null_pos in
+	let m = Typeload.load_module ctx ([], "Any") null_pos in
 	(match m.m_types with
-	| TTypeDecl def::_ ->
-		Higherkind.In.t_ref := Some def
+	| TAbstractDecl a::_ ->
+		Higherkind.any_t_ref :=  Some a
 	| _ -> assert false
 	);
-	*)
 	let m = Typeload.load_module ctx ([], Higherkind.In.mk_name 1) null_pos in
 	(match m.m_types with
 	| TAbstractDecl a::_ -> Higherkind.In.t2_ref := Some a 

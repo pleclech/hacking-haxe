@@ -4,6 +4,22 @@ open Typedef
 open Typeutility
 open Onthefly
 
+let debug_expr_with_type e =
+	let s_type = Typeutility.s_type (print_context()) in
+	let es = Typeutility.s_expr_pretty false "    " false s_type e in
+	let t = s_type_kind e.etype in
+	Printf.printf "%s : %s\n%!" es t;
+	e
+
+let rec follow_no_ttype t = match t with
+	| TMono r ->
+		(match !r with
+		| Some t -> follow_no_ttype t
+		| _ -> t)
+	| TLazy f ->
+		follow_no_ttype (!f())
+	| _ -> t
+
 module In = struct
     let name = "In"
     let meta_name = ":"^name
@@ -14,6 +30,8 @@ module In = struct
 	
 	let t_ref:(tdef option) ref = ref None
 	let t2_ref:(tabstract option) ref = ref None
+
+	let mk_ct1 p = CTPath {tpackage=[];tname=(mk_name 1);tparams=[TPType(CTOptional None, p)];tsub=None;}, p
 
 	let mk_t tl =
 		incr id;
@@ -28,7 +46,8 @@ module In = struct
 		| 1 -> (match !t2_ref with Some a -> TAbstract({a with a_path=mk_path l a.a_path}, tl) | None -> raise Not_found)
 		| _ -> raise Not_found
 
-	let retype_expr e = match follow e.etype with
+	let retype_expr e =
+		match follow e.etype with
 		| TAbstract(a, [t]) when Meta.has meta a.a_meta -> {e with etype=t}
 		| _ -> e
 	
@@ -40,11 +59,11 @@ module InList = struct
     let meta = Meta.Custom meta_name
 
 	let mk_name arity = if arity <= 0 then name else Printf.sprintf "%s%d" name arity
-	
+
 	let t_ref:(tabstract option) ref = ref None
 	let t2_ref:(tabstract option) ref = ref None
 
-	let mk_t tl =
+	let mk_t tl =		
 		let mk_path l (p,n) =
 			let n = mk_name l in
 			p, n
@@ -73,21 +92,15 @@ let mk_from_tparam t p =
 	| _ as l ->
 		let tname = Printf.sprintf "%s%d" name l in
 		let tc = TPType(CTPath {tpackage=[];tname=t.tname;tparams=[];tsub=None;}, p) in
-		let th = TPType(CTOptional None,p) in
+		let th = TPType(In.mk_ct1 p) in
 		let tparams = tc::th::t.tparams in
 		let t = {tpackage=[]; tsub=None; tname; tparams} in
 		(t,p)
 
 let t_ref:(tabstract option) ref = ref None
 let t2_ref:(tabstract option) ref = ref None
+let any_t_ref:(tabstract option) ref = ref None
 
-(*
-let mk_t t tl =
-	let l = List.length tl in
-	match !t_ref with
-	| Some a -> TAbstract({a with a_path=([], mk_name l)}, t::tl)
-	| None -> raise Not_found
-*)
 let is_hkt m = Meta.has meta m
 let is_in m = Meta.has In.meta m
 let is_inlist m = Meta.has InList.meta m
@@ -111,57 +124,24 @@ let mk_with_abstract2 a ap t =
 				| _ -> raise Not_found
 			in loop (List.rev tl) [] [] [] l
 		in
-	match t with
-	| TInst(def, tl) ->
-		let lin, lout, lins = mk_in tl in
-		(TAbstract(a, TInst(def, lin)::(InList.mk_t lins)::lout))
-	| TAbstract(def, tl) ->
-		let lin, lout, lins = mk_in tl in
-		(TAbstract(a, TAbstract(def, lin)::(InList.mk_t lins)::lout))
-	| TEnum(def, tl) ->
-		let lin, lout, lins = mk_in tl in
-		(TAbstract(a, TEnum(def, lin)::(InList.mk_t lins)::lout))
-	| TType(def, tl) ->
-		let lin, lout, lins = mk_in tl in
-		(TAbstract(a, TType(def, lin)::(InList.mk_t lins)::lout))		
-	| _ -> raise Not_found
-
-let mk_with_abstract a ap t =
-	let l = List.length a.a_params - 1 in
-	if l <= 0 then raise Not_found
-	else
-		let mk_in tl =
-			let rec loop xs lin lout l = 
-				match xs, l with
-				| x::xs, _ ->
-					let t' = TMono (ref None) in
-					let t = In.mk_t [x;t'] in
-					let lin = t'::lin in
-					let lout = t::lout in
-					if l=1 then (List.rev xs)@lin, lout
-					else loop xs lin lout (l-1)
-				| _ -> raise Not_found
-			in loop (List.rev tl) [] [] l
-		in
-	match t with
-	| TInst(def, tl) ->
-		let lin, lout = mk_in tl in
-		(TAbstract(a, TInst(def, lin)::lout))
-	| TAbstract(def, tl) ->
-		let lin, lout = mk_in tl in
-		(TAbstract(a, TAbstract(def, lin)::lout))
-	| TEnum(def, tl) ->
-		let lin, lout = mk_in tl in
-		(TAbstract(a, TEnum(def, lin)::lout))
-	| TType(def, tl) ->
-		let lin, lout = mk_in tl in
-		(TAbstract(a, TType(def, lin)::lout))		
-	| _ -> raise Not_found
-
-let mk_with_t hkt t = match hkt with
-	| TAbstract(a,tl) when is_hkt a.a_meta ->
-		mk_with_abstract a tl t
-	| _ -> raise Not_found
+		match t with
+		| TInst(def, tl) ->
+			let lin, lout, lins = mk_in tl in
+			let lins = In.mk_t [ TMono(ref (Some(InList.mk_t lins))) ] in
+			(TAbstract(a, TInst(def, lin)::lins::lout))
+		| TAbstract(def, tl) ->
+			let lin, lout, lins = mk_in tl in
+			let lins = In.mk_t [ TMono(ref (Some(InList.mk_t lins))) ] in
+			(TAbstract(a, TAbstract(def, lin)::lins::lout))
+		| TEnum(def, tl) ->
+			let lin, lout, lins = mk_in tl in
+			let lins = In.mk_t [ TMono(ref (Some(InList.mk_t lins))) ] in
+			(TAbstract(a, TEnum(def, lin)::lins::lout))
+		| TType(def, tl) ->
+			let lin, lout, lins = mk_in tl in
+			let lins = In.mk_t [ TMono(ref (Some(InList.mk_t lins))) ] in
+			(TAbstract(a, TType(def, lin)::lins::lout))		
+		| _ -> raise Not_found
 
 let apply_in inlist tl =
 	let rec loop xs ys = match xs,ys with
@@ -176,11 +156,27 @@ let apply_in inlist tl =
 	| _ -> ()
 	in loop (List.rev inlist) (List.rev tl)
 
+let erase_in inlist =
+	let rec loop xs = match xs with
+	| x::xs ->
+		(match x with
+		| TMono r ->
+			begin match !r with
+			| Some t ->
+				(match !any_t_ref with None -> () | Some a -> r := Some (TAbstract(a, [])))
+			| _ -> ()
+			end;
+			loop xs
+		| _ -> loop xs
+		)
+	| _ -> ()
+	in loop inlist
+
 let rec fill_in_list tl = match tl with
-	| c::(TMono r)::tl ->
+	| c::TAbstract(def,[TMono r])::tl when is_in def.a_meta ->
 			let ins = ref [] in
 			let rec loop t =
-				let t' = follow t in
+				let t' = follow_no_ttype t in
 				match t' with
 				| TAbstract(def, [t]) when is_in def.a_meta -> ins := t::!ins
 				| TAbstract(def, tl) when is_hkt def.a_meta ->
@@ -197,22 +193,18 @@ let rec fill_in_list tl = match tl with
 	| _ -> []
 
 let apply_with_abstract a tl =
+	if not (is_hkt a.a_meta) then raise Not_found
+	else
 	match tl with
-		| c::i::tl' ->
-			begin
-				match i with
-				| TMono r ->
-					(match !r with
-					| Some (TAbstract(def, ins)) when is_inlist def.a_meta -> apply_in ins tl'
-					| Some x -> ignore(fill_in_list tl)
-					| _ -> ()
-					)
-				| TAbstract(def, ins) when is_inlist def.a_meta -> apply_in ins tl'
-				| _ -> raise Not_found
-			end;
-			c,tl'
-		| _ -> 
-			raise Not_found
+		| c::TAbstract(def,[(TMono r) as t])::tl' when is_in def.a_meta ->
+			begin match follow t with
+			| TAbstract(def, ins) when is_inlist def.a_meta ->
+				apply_in ins tl';
+				c,ins,tl'
+			| _ -> assert false
+			end
+		| _ ->
+			assert false
 
 let fill_with_abstract a tl =
 	ignore(fill_in_list tl);
@@ -221,25 +213,21 @@ let fill_with_abstract a tl =
 let get_impl_from_abstract aa tl =
 	if not (is_hkt aa.a_meta) then raise Not_found
 	else
-		let c, tla = fill_with_abstract aa tl in
+		let c,_,tla = fill_with_abstract aa tl in
 		let l = List.length tla in
-		let t = match c with
+		match c with
 			| TInst ({cl_kind = KTypeParameter tl}, _) -> raise Not_found
 			| TInst(i,tl) when l=(List.length tl) -> TInst(i,tla)
 			| TEnum(e,tl) when l=(List.length tl) -> TEnum(e,tla)
 			| TAbstract(a,tl) when l=(List.length tl) -> TAbstract(a,tla)
 			| TType(t,tl) when l=(List.length tl) -> TType(t, tla)
 			| _ as t -> t
-			in
-			Printf.printf "get_impl_from_type:\n%s\n%s\n%!" (s_type (print_context()) (TAbstract(aa,tl))) (s_type (print_context()) t);
-			t 
 
 let get_impl_from_type t = match follow t with
 	| TAbstract (aa,tl) -> (try get_impl_from_abstract aa tl with Not_found -> t)
 	| _ -> t
 
 let rec erase_type t with_type =
-	Printf.printf "erasing %s with %s\n%!" (s_type_kind t) (s_type_kind with_type);
 	let rec loop t1 t2 = match get_impl_from_type t1, get_impl_from_type t2 with
 	| TInst(i1,tl1), TInst(i2,tl2) ->
 		let tl1 = if tl2=[] then tl2
@@ -297,7 +285,7 @@ let erase_type_for_class_field cf = match cf.cf_override with
 
 let get_type t = try get_impl_from_type t with Not_found -> t
 
-let retype_expr e = try let t = get_impl_from_type e.etype in {e with etype=t} with Not_found -> e
+let retype_expr e = In.retype_expr (try let t = get_impl_from_type e.etype in {e with etype=t} with Not_found -> e)
 
 ;;
 

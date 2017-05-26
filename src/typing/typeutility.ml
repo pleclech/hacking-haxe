@@ -295,6 +295,7 @@ let apply_params cparams params t =
 			(match tl with
 			| [] -> t
 			| _ -> TType (t2,List.map loop tl))
+		| TAbstract (a, [(TMono r) as t']) when Meta.has (Meta.Custom ":In") a.a_meta -> t
 		| TAbstract (a,tl) ->
 			(match tl with
 			| [] -> t
@@ -1252,4 +1253,4 @@ module StringError = struct
 	let string_error s sl msg =
 		try string_error_raise s sl msg
 		with Not_found -> msg
-end
+end
