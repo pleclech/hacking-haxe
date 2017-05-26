@@ -1,6 +1,6 @@
 #!/bin/sh
 BUILD="_build/${1}/"
-DONE=$(rsync -iud --delete --ignore-missing-args --include '*.ml' --exclude='*' ${1}/ ${BUILD})
+DONE=$(rsync -iud --delete --include '*.ml' --exclude='*' ${1}/ ${BUILD})
 if [ $? -eq 0 ]; then
     if [ -n "${DONE}" ]; then
         DEL=$(echo ${DONE} | sed -rn 's/\*deleting\s(\w+)\.ml([^\*]+)?/\1\.*,/gp' | sed -re 's/,$//')
